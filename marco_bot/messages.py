@@ -125,7 +125,7 @@ SAFE_SELL_BANNER = """✔ Instant Payments ⚡
 Fund Purity & Safety — Guaranteed by MARCO 🔥
 Each penny you receive is 100% authentic & Guaranteed!"""
 
-PAYMENT_MODE_SELECT = f"Sell your crypto in multiple methods {premium_emoji('6339166816006312740', '👇')}⚡"
+PAYMENT_MODE_SELECT = "Sell your crypto in multiple methods 👇⚡"
 
 
 def exchange_rates(payment_mode: str, tiers: list[tuple[Decimal, Decimal | None, Decimal]]) -> str:
@@ -139,7 +139,7 @@ def exchange_rates(payment_mode: str, tiers: list[tuple[Decimal, Decimal | None,
     tier_text = "\n".join(lines)
     return f"""👁 Important - You may get funds in multiple 💰 shots, if the order is bigger than 25K₹ 👁 (100% Safe 👛)
 
-EXCHANGE RATES FOR {payment_mode} {premium_emoji('6339166816006312740', '👇')}
+EXCHANGE RATES FOR {payment_mode} 👇
 
 {tier_text}
 
@@ -149,7 +149,7 @@ Enter Amount in $ you want to sell :"""
 def inr_preview(amount_inr: Decimal) -> str:
     return f"""You will receive approx: ₹{amount_inr:.2f} 💵
 
-Select Your Crypto {premium_emoji('5242625806655570503', '🤑')} Token {premium_emoji('6339166816006312740', '👇')}"""
+Select Your Crypto {premium_emoji('5242625806655570503', '🤑')} Token 👇"""
 
 
 def express_chain_select(token: str) -> str:
@@ -200,10 +200,10 @@ You can deposit funds to use later or withdraw your funds at any time"""
 def my_stats(username: str, member_since: str, ads: int, sells: int, volume: Decimal) -> str:
     return f"""<tg-emoji emoji-id='5913702317667913862'>📊</tg-emoji> @{username} Statistics
 
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> Member Since: {member_since}
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> P2P Ads Posted: {ads}
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> Safe Sells Completed: {sells}
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> Total Safe Sell Volume: ${volume:.2f}
+▪️ Member Since: {member_since}
+▪️ P2P Ads Posted: {ads}
+▪️ Safe Sells Completed: {sells}
+▪️ Total Safe Sell Volume: ${volume:.2f}
 
 Use {BOT_USERNAME} for SAFE-SELL <tg-emoji emoji-id='5409099658171537510'>⚡️</tg-emoji>"""
 
