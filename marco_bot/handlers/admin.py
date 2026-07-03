@@ -117,11 +117,11 @@ async def test_emoji(message: Message) -> None:
 
     parts: list[str] = []
     for eid in emoji_ids:
-        parts.append("🔹")
+        parts.append(f'<tg-emoji emoji-id="{eid}">🔹</tg-emoji>')
 
     preview = " ".join(parts)
     ids_line = "\n".join(emoji_ids)
-    await message.answer(f"Custom emoji preview:\n{preview}\n\nIDs:\n{ids_line}")
+    await message.answer(f"Custom emoji preview:\n{preview}\n\nIDs:\n{ids_line}", parse_mode=ParseMode.HTML)
 
 
 @router.message(Command("pending"))
