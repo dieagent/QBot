@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from aiogram.enums import MessageEntityType
 from aiogram.types import MessageEntity
 
 from .constants import (
@@ -68,7 +69,7 @@ def custom_emoji_entities(parts: list[str | tuple[str, str]]) -> tuple[str, list
             text_parts.append(emoji_text)
             length = _utf16_len(emoji_text)
             entities.append(
-                MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)
+                MessageEntity(type=MessageEntityType.CUSTOM_EMOJI, offset=offset, length=length, custom_emoji_id=emoji_id)
             )
             offset += length
         else:
