@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from aiogram.types import MessageEntity
+
 from .constants import (
     ADS_CHANNEL_USERNAME,
     BOT_USERNAME,
@@ -50,6 +52,82 @@ Use /start to sell your crypto right away! ⚡"""
 
 def premium_emoji(emoji_id: str, fallback: str) -> str:
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def custom_emoji_entities(parts: list[str | tuple[str, str]]) -> tuple[str, list[MessageEntity]]:
+    text_parts: list[str] = []
+    entities: list[MessageEntity] = []
+    offset = 0
+    for part in parts:
+        if isinstance(part, tuple):
+            emoji_text, emoji_id = part
+            text_parts.append(emoji_text)
+            length = _utf16_len(emoji_text)
+            entities.append(
+                MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)
+            )
+            offset += length
+        else:
+            text_parts.append(part)
+            offset += _utf16_len(part)
+    return "".join(text_parts), entities
+
+
+def welcome_render() -> tuple[str, list[MessageEntity]]:
+    return custom_emoji_entities(
+        [
+            ("🔥", "5408892168301466942"),
+            " Welcome To MARCO P2P Bot ",
+            ("🤖", "5409315600537250312"),
+            ", where you can Sell & Buy Crypto Easily ",
+            ("⚡️", "5229121484584139947"),
+            "\n\nWhat is your objective?",
+        ]
+    )
+
+
+def my_stats_render(username: str, member_since: str, ads: int, sells: int, volume: Decimal) -> tuple[str, list[MessageEntity]]:
+    return custom_emoji_entities(
+        [
+            ("📊", "5913702317667913862"),
+            f" @{username} Statistics\n\n",
+            ("▪️", "5936130851635990622"),
+            f" Member Since: {member_since}\n",
+            ("▪️", "5936130851635990622"),
+            f" P2P Ads Posted: {ads}\n",
+            ("▪️", "5936130851635990622"),
+            f" Safe Sells Completed: {sells}\n",
+            ("▪️", "5936130851635990622"),
+            f" Total Safe Sell Volume: ${volume:.2f}\n\n",
+            "Use ",
+            BOT_USERNAME,
+            " for SAFE-SELL ",
+            ("⚡️", "5409099658171537510"),
+        ]
+    )
+
+
+def global_stats_render(total: Decimal, today: Decimal, deals: int) -> tuple[str, list[MessageEntity]]:
+    return custom_emoji_entities(
+        [
+            ("📊", "5913702317667913862"),
+            f" Global Stats Of {BOT_USERNAME}\n\n",
+            ("💰", "5987880246865565644"),
+            f" Total SAFE-SOLD Amount:\n${total:,.2f}\n\n",
+            ("📅", "5217604963571621845"),
+            f" Today's SAFE-SOLD Amount:\n${today:,.2f}\n\n",
+            ("🔥", "5408892168301466942"),
+            f" Total SAFE-SOLD Deals Completed:\n{deals}\n\n",
+            ("💎", "5877485980901971030"),
+            f" Always use {BOT_USERNAME} to get safest INR₹ in exchange!\n",
+            ("⚡️", "5409099658171537510"),
+            " This Data shows how much crypto users have SOLD US!",
+        ]
+    )
 
 
 OBJECTIVE = f"{premium_emoji('5951665890079544884', '✅')} What would you like to do?"
