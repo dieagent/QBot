@@ -22,7 +22,7 @@ Escrow : {ESCROW_BOT_USERNAME}
 Chat : {ESCROW_CHAT_USERNAME}
 Updates : {UPDATES_USERNAME}"""
 
-WELCOME = """<tg-emoji emoji-id="5958376256788502078">🙏</tg-emoji> Welcome To MARCO P2P Bot <tg-emoji emoji-id="5220166546491459639">🔥</tg-emoji>, where you can Sell & Buy Crypto Easily <tg-emoji emoji-id="5408892168301466942">⚡</tg-emoji>
+WELCOME = """<tg-emoji emoji-id="5408892168301466942">🔥</tg-emoji> Welcome To MARCO P2P Bot <tg-emoji emoji-id="5409315600537250312">🤖</tg-emoji>, where you can Sell & Buy Crypto Easily <tg-emoji emoji-id="5229121484584139947">⚡️</tg-emoji>
 
 What is your objective?"""
 
@@ -65,7 +65,7 @@ def chain_select(coin: str) -> str:
         'USDC': premium_emoji('5240086656349913841', '🤑'),
     }
     extra_emoji = coin_emoji.get(coin, premium_emoji('5242551409232069476', '🤑'))
-    return f"{premium_emoji('5411246291416013236', '🔗')} Select Chain for {coin} {extra_emoji}"
+    return f"{premium_emoji('5411246291416013236', '🔗')} Select Chain for {extra_emoji} {coin}:"
 
 
 FUNDS_SOURCE = "<tg-emoji emoji-id='5348503265967355284'>💰</tg-emoji> Choose payment source:"
@@ -161,7 +161,7 @@ def express_chain_select(token: str) -> str:
         "USDC": "5240086656349913841",
     }
     emoji_id = token_emojis.get(token, "5242551409232069476")
-    return f"{premium_emoji('5411246291416013236', '🔗')} Select Network Chain for {premium_emoji(emoji_id, '🤑')} {token}:"
+    return f"{premium_emoji('5411246291416013236', '🔗')} Select Chain for {premium_emoji(emoji_id, '🤑')} {token}:"
 
 
 def deposit_instructions(token: str, chain: str, address: str) -> str:
