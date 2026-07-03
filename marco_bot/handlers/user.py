@@ -329,16 +329,14 @@ def is_locked_entry(text: str) -> bool:
 
 async def send_welcome(target: Message, user: User) -> None:
     async with session_scope() as session:
-        welcome_text, welcome_entities = msg.welcome_render()
         await send_tracked_menu_photo(
             session,
             target.bot,
             user.user_id,
             target.chat.id,
             welcome_banner_file(),
-            welcome_text,
+            msg.welcome_render(),
             reply_markup=kb.persistent_menu(user),
-            caption_entities=welcome_entities,
         )
 
 
@@ -802,21 +800,19 @@ async def show_my_stats(message: Message, user: User) -> None:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.LOCKED_STATS, reply_markup=kb.persistent_menu(user))
             return
         member_since = user.first_seen_at.strftime("%d %b, %Y")
-        stats_text, stats_entities = msg.my_stats_render(
-            user.username or str(user.user_id),
-            member_since,
-            user.ads_posted_count,
-            user.safe_sells_completed,
-            user.safe_sell_volume,
-        )
         await send_tracked_menu_message(
             session,
             message.bot,
             user.user_id,
             message.chat.id,
-            stats_text,
+            msg.my_stats_render(
+                user.username or str(user.user_id),
+                member_since,
+                user.ads_posted_count,
+                user.safe_sells_completed,
+                user.safe_sell_volume,
+            ),
             reply_markup=kb.persistent_menu(user),
-            entities=stats_entities,
         )
 
 
@@ -870,13 +866,13 @@ async def show_global_stats(message: Message) -> None:
         await asyncio.sleep(0.3)
         
         # Show final statistics
-        final_text, final_entities = msg.global_stats_render(stats.total_safe_sold_amount, stats.today_safe_sold_amount, stats.total_deals_completed)
+        final_text = msg.global_stats_render(stats.total_safe_sold_amount, stats.today_safe_sold_amount, stats.total_deals_completed)
         try:
             await message.bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=sent_msg.message_id,
                 text=final_text,
-                entities=final_entities,
+                parse_mode=None,
             )
         except (TelegramBadRequest, TelegramForbiddenError):
             pass
