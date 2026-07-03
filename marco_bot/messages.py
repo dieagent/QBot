@@ -110,11 +110,11 @@ Ref: {ref_code}
 Use {BOT_USERNAME} for SAFE-SELL ⚡"""
 
 
-SAFE_SELL_LANDING = f"""Welcome to MARCO P2P Bot {premium_emoji('5994297722574737553', '💬')}
+SAFE_SELL_LANDING = f"""Welcome to MARCO P2P Bot 💬
 
-{premium_emoji('5197434882321567830', '💵')} SAFE SELL — A trusted platform to Sell Crypto {premium_emoji('4911320645146510335', '🔥')} Instantly and receive SAFE & GUARANTEED {premium_emoji('5832546462478635761', '🔒')} INR ₹ directly.
+💵 SAFE SELL — A trusted platform to Sell Crypto 🔥 Instantly and receive SAFE & GUARANTEED 🔒 INR ₹ directly.
 
-Choose an option below to get started {premium_emoji('6105102145030199285', '👇')}"""
+Choose an option below to get started 👇"""
 
 SAFE_SELL_BANNER = """✔ Instant Payments ⚡
 ✔ Verified & Guaranteed Funds
@@ -135,9 +135,9 @@ def exchange_rates(payment_mode: str, tiers: list[tuple[Decimal, Decimal | None,
             band = f"${min_usd:.0f}+"
         else:
             band = f"${min_usd:.0f}-${max_usd:.0f}"
-        lines.append(f"{premium_emoji('5935795874251674052', '⚡️')} {band} : {rate:.1f}₹")
+        lines.append(f"⚡️ {band} : {rate:.1f}₹")
     tier_text = "\n".join(lines)
-    return f"""{premium_emoji('5960714428394507968', '👁')} Important - You may get funds in multiple {premium_emoji('5897958754267174109', '💰')} shots, if the order is bigger than 25K₹ {premium_emoji('6019295596173596341', '👁')} (100% Safe {premium_emoji('5769403330761593044', '👛')})
+    return f"""👁 Important - You may get funds in multiple 💰 shots, if the order is bigger than 25K₹ 👁 (100% Safe 👛)
 
 EXCHANGE RATES FOR {payment_mode} {premium_emoji('6339166816006312740', '👇')}
 
@@ -147,7 +147,7 @@ Enter Amount in $ you want to sell :"""
 
 
 def inr_preview(amount_inr: Decimal) -> str:
-    return f"""You will receive approx: ₹{amount_inr:.2f} {premium_emoji('5197434882321567830', '💵')}
+    return f"""You will receive approx: ₹{amount_inr:.2f} 💵
 
 Select Your Crypto {premium_emoji('5242625806655570503', '🤑')} Token {premium_emoji('6339166816006312740', '👇')}"""
 
@@ -166,14 +166,14 @@ def express_chain_select(token: str) -> str:
 
 def deposit_instructions(token: str, chain: str, address: str) -> str:
     return f"""{premium_emoji('5242551409232069476', '🤑')} Token: {token}
-{premium_emoji('5877465816030515018', '🔗')} Network: {chain}
+🔗 Network: {chain}
 
-Pay on the address below {premium_emoji('6339166816006312740', '👇')}:
+Pay on the address below 👇:
 {address}
 
-{premium_emoji('5447644880824181073', '⚠️')} Note: Send exact amount or more. Any extra will be added to your wallet balance.
+⚠️ Note: Send exact amount or more. Any extra will be added to your wallet balance.
 
-After payment, {premium_emoji('5877468380125990242', '➡️')} click 'CHECK PAYMENT' below to send proof {premium_emoji('6019295596173596341', '👁')}"""
+After payment, ➡️ click 'CHECK PAYMENT' below to send proof 👁"""
 
 
 SCREENSHOT_PROMPT = "Please send a screenshot of your payment for verification 📸."
@@ -190,9 +190,9 @@ Account is currently locked."""
 
 
 def wallet(balance: Decimal) -> str:
-    return f"""<tg-emoji emoji-id='5444856076954520455'>🧾</tg-emoji> Your Wallet Balance
+    return f"""🧾 Your Wallet Balance
 
-<tg-emoji emoji-id='5287231198098117669'>💰</tg-emoji> Available: ${balance:.2f} USD
+💰 Available: ${balance:.2f} USD
 
 You can deposit funds to use later or withdraw your funds at any time"""
 
