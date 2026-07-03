@@ -22,7 +22,7 @@ Escrow : {ESCROW_BOT_USERNAME}
 Chat : {ESCROW_CHAT_USERNAME}
 Updates : {UPDATES_USERNAME}"""
 
-WELCOME = """<tg-emoji emoji-id="5958376256788502078">🙏</tg-emoji> Welcome To MARCO P2P Bot <tg-emoji emoji-id="5220166546491459639">🔥</tg-emoji>, where you can Sell & Buy Crypto Easily <tg-emoji emoji-id="5408892168301466942">⚡</tg-emoji>
+WELCOME = """🔥 Welcome To MARCO P2P Bot 🤖, where you can Sell & Buy Crypto Easily ⚡️
 
 What is your objective?"""
 
@@ -49,56 +49,56 @@ Use /start to sell your crypto right away! ⚡"""
 
 
 def premium_emoji(emoji_id: str, fallback: str) -> str:
-    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    return fallback
 
 
 OBJECTIVE = f"{premium_emoji('5951665890079544884', '✅')} What would you like to do?"
-COIN_SELECT = f"{premium_emoji('5778311685638984859', '🪙')} Choose Your Coin:"
+COIN_SELECT = f"{premium_emoji('5778311685638984859', '🌐')} Choose Your Coin:"
 
 
 def chain_select(coin: str) -> str:
     coin_emoji = {
-        'USDT': premium_emoji('5359437015752401733', '📱'),
-        'BTC': premium_emoji('5359584650958226302', '📱'),
-        'ETH': premium_emoji('5359321266383766546', '📱'),
-        'SOL': premium_emoji('4915861533679944766', '🔥'),
+        'USDT': premium_emoji('5242551409232069476', '🤑'),
+        'BTC': premium_emoji('5242625806655570503', '🤑'),
+        'ETH': premium_emoji('5246838478083211008', '🤑'),
+        'SOL': premium_emoji('5240212838194104761', '🤑'),
         'USDC': premium_emoji('5240086656349913841', '🤑'),
     }
-    extra_emoji = coin_emoji.get(coin, '')
-    return f"<tg-emoji emoji-id='5411246291416013236'>🔗</tg-emoji> Select Chain for {coin} {extra_emoji}"
+    extra_emoji = coin_emoji.get(coin, premium_emoji('5242551409232069476', '🤑'))
+    return f"{premium_emoji('5411246291416013236', '🔗')} Select Chain for {extra_emoji} {coin}:"
 
 
-FUNDS_SOURCE = "<tg-emoji emoji-id='5348503265967355284'>💰</tg-emoji> Choose payment source"
+FUNDS_SOURCE = "💰 Choose payment source:"
 
 
 def rate_input(category: str, minimum: float, maximum: float) -> str:
-    return f"""<tg-emoji emoji-id='5927169041595634481'>💳</tg-emoji> Set exchange rate
+    return f"""💳 Set exchange rate:
 Category: {category}
 Enter a number between {minimum:.1f} and {maximum:.1f}:"""
 
 
 AMOUNT_INPUT = "▽ Enter amount / quantity ⚡\n(e.g 10-100-1000)"
-PAYMENT_METHOD = "<tg-emoji emoji-id='5967389567781703494'>💼</tg-emoji> Pick a payment method"
+PAYMENT_METHOD = "💼 Pick a payment method:"
 
 
 def ad_text(data: dict, username: str, preview: bool = True) -> str:
     side = data.get("side", "sell")
     if side == "sell":
-        side_line = "<tg-emoji emoji-id='5972265777296838427'>💵</tg-emoji> #Selling"
+        side_line = "❗ #Selling"
     else:
-        side_line = "<tg-emoji emoji-id='5852871561983299073'>🛒</tg-emoji> #Buying"
-    header = "🔍 ADVERTISEMENT PREVIEW\n\n" if preview else ""
+        side_line = "🛒 #Buying"
+    header = "🔎 ADVERTISEMENT PREVIEW\n\n" if preview else ""
     return f"""{header}{side_line}
 
-<tg-emoji emoji-id='5832251986635920010'>💎</tg-emoji> Crypto: {data.get("coin")}
-<tg-emoji emoji-id='5992430854909989581'>💰</tg-emoji> Quantity: {data.get("amount")}$
-<tg-emoji emoji-id='5987917196469213507'>🔗</tg-emoji> Chain: {data.get("chain")}
-<tg-emoji emoji-id='5926783847453692661'>🏦</tg-emoji> Funds Source: {data.get("funds_source")}
-<tg-emoji emoji-id='5974217466270716579'>📈</tg-emoji> Rate: {data.get("rate")}
-<tg-emoji emoji-id='5967548335542767952'>💳</tg-emoji> Payment Method: {data.get("payment_method")}
+💎 Crypto: {data.get("coin")}
+💰 Quantity: {data.get("amount")}$
+🔗 Chain: {data.get("chain")}
+🏦 Funds Source: {data.get("funds_source")}
+📈 Rate: {data.get("rate")}
+💳 Payment Method: {data.get("payment_method")}
 
-<tg-emoji emoji-id='5886412370347036129'>👤</tg-emoji> DM: @{username}
-<tg-emoji emoji-id='6034962180875490251'>⚖️</tg-emoji> Escrow: {IN_AD_ESCROW_USERNAME}"""
+👤 DM: @{username}
+⚖️ Escrow: {IN_AD_ESCROW_USERNAME}"""
 
 
 def ad_published(ref_code: str) -> str:
@@ -154,14 +154,14 @@ Select Your Crypto {premium_emoji('5242625806655570503', '🤑')} Token {premium
 
 def express_chain_select(token: str) -> str:
     token_emojis = {
-        "USDT": "5359437015752401733",
-        "BTC": "5359584650958226302",
-        "ETH": "5359321266383766546",
-        "SOL": "4915861533679944766",
+        "USDT": "5242551409232069476",
+        "BTC": "5242625806655570503",
+        "ETH": "5246838478083211008",
+        "SOL": "5240212838194104761",
         "USDC": "5240086656349913841",
     }
-    emoji_id = token_emojis.get(token, "5359321266383766546")
-    return f"{premium_emoji('5411246291416013236', '🔗')} Select Network Chain for {token} {premium_emoji(emoji_id, '📱')}"
+    emoji_id = token_emojis.get(token, "5242551409232069476")
+    return f"{premium_emoji('5411246291416013236', '🔗')} Select Network Chain for {premium_emoji(emoji_id, '🤑')} {token}:"
 
 
 def deposit_instructions(token: str, chain: str, address: str) -> str:
@@ -190,22 +190,22 @@ Account is currently locked."""
 
 
 def wallet(balance: Decimal) -> str:
-    return f"""<tg-emoji emoji-id='5444856076954520455'>🧾</tg-emoji> Your Wallet Balance
+    return f"""🧾 Your Wallet Balance
 
-<tg-emoji emoji-id='5287231198098117669'>💰</tg-emoji> Available: ${balance:.2f} USD
+💰 Available: ${balance:.2f} USD
 
 You can deposit funds to use later or withdraw your funds at any time"""
 
 
 def my_stats(username: str, member_since: str, ads: int, sells: int, volume: Decimal) -> str:
-    return f"""<tg-emoji emoji-id='5913702317667913862'>📊</tg-emoji> @{username} Statistics
+    return f"""📊 @{username} Statistics
 
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> Member Since: {member_since}
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> P2P Ads Posted: {ads}
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> Safe Sells Completed: {sells}
-<tg-emoji emoji-id='5936130851635990622'>▪️</tg-emoji> Total Safe Sell Volume: ${volume:.2f}
+▪️ Member Since: {member_since}
+▪️ P2P Ads Posted: {ads}
+▪️ Safe Sells Completed: {sells}
+▪️ Total Safe Sell Volume: ${volume:.2f}
 
-Use {BOT_USERNAME} for SAFE-SELL <tg-emoji emoji-id='5408892168301466942'>🔥</tg-emoji>"""
+Use {BOT_USERNAME} for SAFE-SELL ⚡️"""
 
 
 def loading_animation(percentage: int) -> str:
@@ -214,24 +214,23 @@ def loading_animation(percentage: int) -> str:
     empty = 10 - filled
     bar = "█" * filled + "░" * empty
     status = "✅ Statistics Loaded" if percentage == 100 else ""
-    return f"""<tg-emoji emoji-id='5913702317667913862'>📊</tg-emoji> Loading Global Statistics...{bar} {percentage}% {status}"""
+    return f"""📊 Loading Global Statistics...{bar} {percentage}% {status}"""
 
 
 def global_stats(total: Decimal, today: Decimal, deals: int) -> str:
-    return f"""<tg-emoji emoji-id='5913702317667913862'>📊</tg-emoji> Global Stats Of {BOT_USERNAME}
+    return f"""📊 Global Stats Of {BOT_USERNAME}
 
-<tg-emoji emoji-id='5987880246865565644'>💰</tg-emoji> Total SAFE-SOLD Amount:
+💰 Total SAFE-SOLD Amount:
 ${total:,.2f}
 
-<tg-emoji emoji-id='5217604963571621845'>📅</tg-emoji> Today's SAFE-SOLD Amount:
+📅 Today's SAFE-SOLD Amount:
 ${today:,.2f}
 
-<tg-emoji emoji-id='5408892168301466942'>🔥</tg-emoji> Total SAFE-SOLD Deals
-Completed:
+🔥 Total SAFE-SOLD Deals Completed:
 {deals}
 
-<tg-emoji emoji-id='5877485980901971030'>💎</tg-emoji> Always use {BOT_USERNAME} to get safest INR₹ in exchange!
-<tg-emoji emoji-id='5409099658171537510'>📊</tg-emoji> This Data shows how much crypto users have SOLD US!"""
+💎 Always use {BOT_USERNAME} to get safest INR₹ in exchange!
+⚡️ This Data shows how much crypto users have SOLD US!"""
 
 
 WITHDRAW_AMOUNT = "💵 Enter withdrawal amount in USD ⚡:"

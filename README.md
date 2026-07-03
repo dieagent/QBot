@@ -86,7 +86,7 @@ If an address is missing, users will see a visible `CONFIGURE_TOKEN_CHAIN_ADDRES
 /emojiids
 ```
 
-Use `/emojiids` (or `/emojiiids`) as a reply to a message that contains premium/custom emojis, or include premium emojis in the same command message, to print the Telegram custom emoji IDs needed for `<tg-emoji emoji-id="...">` rendering.
+Use `/emojiids` (or `/emojiiids`) as a reply to a message that contains premium/custom emojis, or include premium emojis in the same command message, to print the Telegram custom emoji IDs needed for custom emoji rendering.
 
 Admin approval buttons are attached to every pending screenshot/withdrawal submission:
 
