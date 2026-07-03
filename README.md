@@ -88,6 +88,8 @@ If an address is missing, users will see a visible `CONFIGURE_TOKEN_CHAIN_ADDRES
 
 Use `/emojiids` (or `/emojiiids`) as a reply to a message that contains premium/custom emojis, or include premium emojis in the same command message, to print the Telegram custom emoji IDs needed for custom emoji rendering.
 
+The bot runtime now uses the updated premium emoji IDs from the latest deployment branch.
+
 Admin approval buttons are attached to every pending screenshot/withdrawal submission:
 
 - Approve unlocks the user.
