@@ -4,8 +4,6 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from .config import load_settings
@@ -22,7 +20,7 @@ async def main() -> None:
     admin.configure(settings)
     user.configure(settings)
 
-    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=settings.bot_token)
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Open the bot"),
