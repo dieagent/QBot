@@ -245,7 +245,11 @@ async def broadcast(message: Message) -> None:
         user_ids = [row[0] for row in result.all()]
     for user_id in user_ids:
         try:
-            await message.bot.send_message(user_id, text)
+            await message.bot.send_message(
+                user_id,
+                text,
+                parse_mode=ParseMode.HTML if "<tg-emoji" in text else None,
+            )
             sent += 1
         except (TelegramBadRequest, TelegramForbiddenError):
             continue
