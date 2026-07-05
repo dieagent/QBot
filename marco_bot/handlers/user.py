@@ -70,7 +70,26 @@ def settings() -> Settings:
 
 
 async def send_start_welcome(message: Message, user: User | None = None) -> None:
-    await message.answer(msg.welcome_render(), reply_markup=kb.persistent_menu(user))
+    async with session_scope() as session:
+        try:
+            await send_tracked_menu_photo(
+                session,
+                message.bot,
+                user.user_id if user else message.from_user.id,
+                message.chat.id,
+                welcome_banner_file(),
+                msg.welcome_render(),
+                reply_markup=kb.persistent_menu(user),
+            )
+        except Exception:
+            await send_tracked_menu_message(
+                session,
+                message.bot,
+                user.user_id if user else message.from_user.id,
+                message.chat.id,
+                msg.welcome_render(),
+                reply_markup=kb.persistent_menu(user),
+            )
 
 
 @router.message(CommandStart())
