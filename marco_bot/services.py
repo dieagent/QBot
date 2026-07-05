@@ -415,23 +415,23 @@ def brand_banner_file() -> BufferedInputFile:
 
 
 def safe_sell_banner_file() -> FSInputFile:
-    banner_path = Path(__file__).parent / "assets" / "banners" / "safe_sell_banner.jpg"
-    return FSInputFile(str(banner_path), filename="marco-safe-sell-banner.png")
+    banner_path = Path(__file__).parent / "assets" / "banners" / "safe_sell_banner1.jpg"
+    return FSInputFile(str(banner_path), filename="safe_sell_banner1.jpg")
 
 
 def welcome_banner_file() -> FSInputFile:
-    banner_path = Path(__file__).parent / "assets" / "banners" / "welcome_banner.jpg"
-    return FSInputFile(str(banner_path), filename="welcome_banner.jpg")
+    banner_path = Path(__file__).parent / "assets" / "banners" / "welcome_banner1.jpg"
+    return FSInputFile(str(banner_path), filename="welcome_banner1.jpg")
 
 
 def post_ad_banner_file() -> FSInputFile:
-    banner_path = Path(__file__).parent / "assets" / "banners" / "post_ad_banner.jpg"
-    return FSInputFile(str(banner_path), filename="post_ad_banner.jpg")
+    banner_path = Path(__file__).parent / "assets" / "banners" / "post_ad_banner1.jpg"
+    return FSInputFile(str(banner_path), filename="post_ad_banner1.jpg")
 
 
 def stats_banner_file() -> FSInputFile:
-    banner_path = Path(__file__).parent / "assets" / "banners" / "stats_banner.jpg"
-    return FSInputFile(str(banner_path), filename="stats_banner.jpg")
+    banner_path = Path(__file__).parent / "assets" / "banners" / "stats_banner1.jpg"
+    return FSInputFile(str(banner_path), filename="stats_banner1.jpg")
 
 
 def public_username(user: User) -> str:

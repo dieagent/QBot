@@ -52,7 +52,28 @@ def test_brand_banner_file_is_png() -> None:
 
 def test_safe_sell_banner_file_is_png() -> None:
     banner = safe_sell_banner_file()
-    assert banner.filename == "marco-safe-sell-banner.png"
+    assert banner.filename == "safe_sell_banner1.jpg"
+
+
+def test_welcome_banner_file_name() -> None:
+    from marco_bot.services import welcome_banner_file
+
+    banner = welcome_banner_file()
+    assert banner.filename == "welcome_banner1.jpg"
+
+
+def test_post_ad_banner_file_name() -> None:
+    from marco_bot.services import post_ad_banner_file
+
+    banner = post_ad_banner_file()
+    assert banner.filename == "post_ad_banner1.jpg"
+
+
+def test_stats_banner_file_name() -> None:
+    from marco_bot.services import stats_banner_file
+
+    banner = stats_banner_file()
+    assert banner.filename == "stats_banner1.jpg"
 
 
 def test_railway_postgres_url_is_normalized() -> None:
