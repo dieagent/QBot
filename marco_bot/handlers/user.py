@@ -843,8 +843,8 @@ async def show_global_stats(message: Message) -> None:
             await session.flush()
         await reset_today_if_needed(session, stats, settings().timezone)
         
-        # Send stats banner photo first
-        await send_tracked_menu_photo(
+        # Send one poster message and keep editing its caption in place.
+        sent_msg = await send_tracked_menu_photo(
             session,
             message.bot,
             message.from_user.id,
@@ -853,25 +853,15 @@ async def show_global_stats(message: Message) -> None:
             msg.loading_animation(10),
             parse_mode=ParseMode.HTML,
         )
-        
-        # Send initial loading message
-        sent_msg = await send_tracked_menu_message(
-            session,
-            message.bot,
-            message.from_user.id,
-            message.chat.id,
-            msg.loading_animation(10),
-            parse_mode=ParseMode.HTML,
-        )
-        
+
         # Animate loading bar: 10% → 30% → 50% → 70% → 90% → 100%
         for percentage in [30, 50, 70, 90, 100]:
             await asyncio.sleep(0.5)
             try:
-                await message.bot.edit_message_text(
+                await message.bot.edit_message_caption(
                     chat_id=message.chat.id,
                     message_id=sent_msg.message_id,
-                    text=msg.loading_animation(percentage),
+                    caption=msg.loading_animation(percentage),
                     parse_mode=ParseMode.HTML,
                 )
             except (TelegramBadRequest, TelegramForbiddenError):
@@ -883,11 +873,11 @@ async def show_global_stats(message: Message) -> None:
         # Show final statistics
         final_text = msg.global_stats_render(stats.total_safe_sold_amount, stats.today_safe_sold_amount, stats.total_deals_completed)
         try:
-            await message.bot.edit_message_text(
+            await message.bot.edit_message_caption(
                 chat_id=message.chat.id,
                 message_id=sent_msg.message_id,
-                text=final_text,
-                parse_mode=None,
+                caption=final_text,
+                parse_mode=ParseMode.HTML,
             )
         except (TelegramBadRequest, TelegramForbiddenError):
             pass
