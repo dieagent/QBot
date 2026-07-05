@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -68,17 +69,22 @@ def settings() -> Settings:
     return _settings
 
 
+async def send_start_welcome(message: Message, user: User | None = None) -> None:
+    await message.answer(msg.welcome_render(), reply_markup=kb.persistent_menu(user))
+
+
 @router.message(CommandStart())
 async def command_start(message: Message) -> None:
     if not message.from_user:
         return
-    async with session_scope() as session:
-        user, created = await get_or_create_user(session, message.from_user)
-        await clear_flow(session, user.user_id)
-        if created:
-            await send_welcome(message, user)
-        else:
-            await send_welcome(message, user)
+    try:
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(session, message.from_user)
+            await clear_flow(session, user.user_id)
+        await send_start_welcome(message, user)
+    except Exception:
+        logging.exception("Failed to handle /start for user %s", message.from_user.id)
+        await send_start_welcome(message, None)
 
 
 @router.message(Command("stats"))
