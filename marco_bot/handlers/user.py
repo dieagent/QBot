@@ -329,15 +329,25 @@ def is_locked_entry(text: str) -> bool:
 
 async def send_welcome(target: Message, user: User) -> None:
     async with session_scope() as session:
-        await send_tracked_menu_photo(
-            session,
-            target.bot,
-            user.user_id,
-            target.chat.id,
-            welcome_banner_file(),
-            msg.welcome_render(),
-            reply_markup=kb.persistent_menu(user),
-        )
+        try:
+            await send_tracked_menu_photo(
+                session,
+                target.bot,
+                user.user_id,
+                target.chat.id,
+                welcome_banner_file(),
+                msg.welcome_render(),
+                reply_markup=kb.persistent_menu(user),
+            )
+        except Exception:
+            await send_tracked_menu_message(
+                session,
+                target.bot,
+                user.user_id,
+                target.chat.id,
+                msg.welcome_render(),
+                reply_markup=kb.persistent_menu(user),
+            )
 
 
 async def show_locked_for_text(message: Message, text: str, user: User) -> None:

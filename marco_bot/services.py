@@ -416,7 +416,7 @@ def brand_banner_file() -> BufferedInputFile:
 
 def safe_sell_banner_file() -> FSInputFile:
     banner_path = Path(__file__).parent / "assets" / "banners" / "safe_sell_banner.jpg"
-    return FSInputFile(str(banner_path), filename="safe_sell_banner.jpg")
+    return FSInputFile(str(banner_path), filename="marco-safe-sell-banner.png")
 
 
 def welcome_banner_file() -> FSInputFile:
