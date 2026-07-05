@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from decimal import Decimal
 
 from .constants import (
@@ -188,11 +189,11 @@ def express_chain_select(token: str) -> str:
 
 
 def deposit_instructions(token: str, chain: str, address: str) -> str:
-    return f"""🤑 Token: {token}
-🔗 Network: {chain}
+    return f"""🤑 Token: {escape(token)}
+🔗 Network: {escape(chain)}
 
 Pay on the address below 👇:
-{address}
+<code>{escape(address)}</code>
 
 ⚠️ Note: Send exact amount or more. Any extra will be added to your wallet balance.
 

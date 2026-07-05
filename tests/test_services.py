@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from marco_bot.config import Settings, _deposit_addresses_from_env, _normalize_database_url
+from marco_bot.messages import deposit_instructions
 from marco_bot.services import brand_banner_file, deposit_address, parse_decimal, safe_sell_banner_file
 
 
@@ -89,3 +90,8 @@ def test_direct_address_env_is_merged(monkeypatch) -> None:
     assert addresses["USDT"]["TRC20"] == "Tdemo"
     assert addresses["USDT"]["BEP20"] == "0xbnb"
     assert addresses["USDT"]["ERC20"] == "0xeth"
+
+
+def test_deposit_instructions_wraps_address_in_code() -> None:
+    text = deposit_instructions("USDT", "TRC20", "Tdemo<addr>")
+    assert "<code>Tdemo&lt;addr&gt;</code>" in text
