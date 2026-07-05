@@ -329,15 +329,13 @@ def is_locked_entry(text: str) -> bool:
 
 async def send_welcome(target: Message, user: User) -> None:
     async with session_scope() as session:
-        await send_tracked_menu_photo(
+        await send_tracked_menu_message(
             session,
             target.bot,
             user.user_id,
             target.chat.id,
-            welcome_banner_file(),
-            msg.WELCOME,
+            msg.welcome_render(),
             reply_markup=kb.persistent_menu(user),
-            parse_mode=ParseMode.HTML,
         )
 
 
@@ -806,7 +804,7 @@ async def show_my_stats(message: Message, user: User) -> None:
             message.bot,
             user.user_id,
             message.chat.id,
-            msg.my_stats(
+            msg.my_stats_render(
                 user.username or str(user.user_id),
                 member_since,
                 user.ads_posted_count,
@@ -814,7 +812,6 @@ async def show_my_stats(message: Message, user: User) -> None:
                 user.safe_sell_volume,
             ),
             reply_markup=kb.persistent_menu(user),
-            parse_mode=ParseMode.HTML,
         )
 
 
@@ -868,13 +865,13 @@ async def show_global_stats(message: Message) -> None:
         await asyncio.sleep(0.3)
         
         # Show final statistics
-        final_text = msg.global_stats(stats.total_safe_sold_amount, stats.today_safe_sold_amount, stats.total_deals_completed)
+        final_text = msg.global_stats_render(stats.total_safe_sold_amount, stats.today_safe_sold_amount, stats.total_deals_completed)
         try:
             await message.bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=sent_msg.message_id,
                 text=final_text,
-                parse_mode=ParseMode.HTML,
+                parse_mode=None,
             )
         except (TelegramBadRequest, TelegramForbiddenError):
             pass

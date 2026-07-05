@@ -104,6 +104,26 @@ async def emoji_ids(message: Message) -> None:
     await message.answer("\n".join(lines))
 
 
+@router.message(Command("testemoji"))
+async def test_emoji(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    emoji_ids = extract_custom_emoji_ids(message)
+    if not emoji_ids:
+        await message.answer(
+            "Usage: reply to a message containing premium emojis, or include them in this message."
+        )
+        return
+
+    parts: list[str] = []
+    for eid in emoji_ids:
+        parts.append(f'<tg-emoji emoji-id="{eid}">🔹</tg-emoji>')
+
+    preview = " ".join(parts)
+    ids_line = "\n".join(emoji_ids)
+    await message.answer(f"Custom emoji preview:\n{preview}\n\nIDs:\n{ids_line}", parse_mode=ParseMode.HTML)
+
+
 @router.message(Command("pending"))
 async def pending(message: Message) -> None:
     if not message.from_user or not is_admin(message.from_user.id):
@@ -225,7 +245,11 @@ async def broadcast(message: Message) -> None:
         user_ids = [row[0] for row in result.all()]
     for user_id in user_ids:
         try:
-            await message.bot.send_message(user_id, text)
+            await message.bot.send_message(
+                user_id,
+                text,
+                parse_mode=ParseMode.HTML if "<tg-emoji" in text else None,
+            )
             sent += 1
         except (TelegramBadRequest, TelegramForbiddenError):
             continue

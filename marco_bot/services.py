@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import BufferedInputFile, FSInputFile, Message, User as TelegramUser
+from aiogram.types import MessageEntity
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -335,8 +336,9 @@ async def send_tracked_menu_photo(
     caption: str,
     reply_markup=None,
     parse_mode: str | None = None,
+    caption_entities: list[MessageEntity] | None = None,
 ) -> Message:
-    resolved_parse_mode = parse_mode or ("HTML" if "<tg-emoji" in caption else None)
+    resolved_parse_mode = None if caption_entities else (parse_mode or ("HTML" if "<tg-emoji" in caption else None))
     await delete_active_menu_message(session, bot, user_id)
     message = await bot.send_photo(
         chat_id=chat_id,
@@ -344,6 +346,7 @@ async def send_tracked_menu_photo(
         caption=caption,
         reply_markup=reply_markup,
         parse_mode=resolved_parse_mode,
+        caption_entities=caption_entities,
     )
     bot_session = await get_or_create_session(session, user_id)
     data = session_data(bot_session)
@@ -360,14 +363,16 @@ async def send_tracked_menu_message(
     text: str,
     reply_markup=None,
     parse_mode: str | None = None,
+    entities: list[MessageEntity] | None = None,
 ) -> Message:
-    resolved_parse_mode = parse_mode or ("HTML" if "<tg-emoji" in text else None)
+    resolved_parse_mode = None if entities else (parse_mode or ("HTML" if "<tg-emoji" in text else None))
     await delete_active_menu_message(session, bot, user_id)
     message = await bot.send_message(
         chat_id=chat_id,
         text=text,
         reply_markup=reply_markup,
         parse_mode=resolved_parse_mode,
+        entities=entities,
     )
     bot_session = await get_or_create_session(session, user_id)
     data = session_data(bot_session)
@@ -411,7 +416,7 @@ def brand_banner_file() -> BufferedInputFile:
 
 def safe_sell_banner_file() -> FSInputFile:
     banner_path = Path(__file__).parent / "assets" / "banners" / "safe_sell_banner.jpg"
-    return FSInputFile(str(banner_path), filename="safe_sell_banner.jpg")
+    return FSInputFile(str(banner_path), filename="marco-safe-sell-banner.png")
 
 
 def welcome_banner_file() -> FSInputFile:
