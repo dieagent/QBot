@@ -1,7 +1,7 @@
 [project]
 name = "marco-p2p-bot"
 version = "1.0.0"
-description = "MARCO P2P Telegram bot rebuild with P2P ads, safe sell, wallet, stats, captcha, cooldowns, and admin review."
+description = "SFOE P2P Telegram bot rebuild with P2P ads, safe sell, wallet, stats, captcha, cooldowns, and admin review."
 requires-python = ">=3.11"
 dependencies = [
     "aiogram>=3.10,<4",

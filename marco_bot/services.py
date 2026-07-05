@@ -406,7 +406,7 @@ def brand_banner_file() -> BufferedInputFile:
     draw.rounded_rectangle((316, 98, 456, 154), radius=20, fill=(245, 255, 250))
     draw.text((342, 110), "Hello", font=small_font, fill=(9, 35, 45))
 
-    draw.text((500, 128), "MARCO P2P BOT", font=title_font, fill=(245, 255, 250))
+    draw.text((500, 128), "SFOE P2P BOT", font=title_font, fill=(245, 255, 250))
     draw.text((520, 244), "FAST        SAFE        SECURE", font=label_font, fill=(122, 235, 209))
     draw.text((580, 336), "Safe • Secure • Fast", font=label_font, fill=(255, 215, 120))
     output = io.BytesIO()

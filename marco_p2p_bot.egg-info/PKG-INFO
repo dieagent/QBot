@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: marco-p2p-bot
 Version: 1.0.0
-Summary: MARCO P2P Telegram bot rebuild with P2P ads, safe sell, wallet, stats, captcha, cooldowns, and admin review.
+Summary: SFOE P2P Telegram bot rebuild with P2P ads, safe sell, wallet, stats, captcha, cooldowns, and admin review.
 Requires-Python: >=3.11
 Requires-Dist: aiogram<4,>=3.10
 Requires-Dist: SQLAlchemy<3,>=2.0

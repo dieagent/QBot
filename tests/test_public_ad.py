@@ -14,7 +14,7 @@ def _settings() -> Settings:
         database_url="sqlite+aiosqlite:///./test.sqlite3",
         admin_ids=[],
         admin_review_chat_id=None,
-        ads_channel_id="@MARCO_P2P",
+        ads_channel_id="@SFOE_P2P",
         ads_group_id="-1001234567890",
         required_groups=[],
         post_ad_cooldown_seconds=10800,
@@ -62,7 +62,7 @@ def test_post_public_ad_posts_to_channel_and_group(monkeypatch) -> None:
     asyncio.run(user.post_public_ad(fake_callback, ad, {"side": "sell", "coin": "USDT", "chain": "BEP20", "funds_source": "Legit", "rate": "94", "amount": "100", "payment_method": "UPI"}, "demo"))
 
     assert calls == [
-        ("@MARCO_P2P", user.msg.ad_text({"side": "sell", "coin": "USDT", "chain": "BEP20", "funds_source": "Legit", "rate": "94", "amount": "100", "payment_method": "UPI"}, "demo", preview=False), "HTML"),
+        ("@SFOE_P2P", user.msg.ad_text({"side": "sell", "coin": "USDT", "chain": "BEP20", "funds_source": "Legit", "rate": "94", "amount": "100", "payment_method": "UPI"}, "demo", preview=False), "HTML"),
         ("-1001234567890", user.msg.ad_text({"side": "sell", "coin": "USDT", "chain": "BEP20", "funds_source": "Legit", "rate": "94", "amount": "100", "payment_method": "UPI"}, "demo", preview=False), "HTML"),
     ]
     assert ad.channel_msg_id == 101

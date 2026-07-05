@@ -1,1 +1,1 @@
-"""MARCO P2P Bot package."""
+"""SFOE P2P Bot package."""

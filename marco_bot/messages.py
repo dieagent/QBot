@@ -22,7 +22,7 @@ Escrow : {ESCROW_BOT_USERNAME}
 Chat : {ESCROW_CHAT_USERNAME}
 Updates : {UPDATES_USERNAME}"""
 
-WELCOME = """🔥 Welcome To MARCO P2P Bot 🤖, where you can Sell & Buy Crypto Easily ⚡️
+WELCOME = """🔥 Welcome To SFOE P2P Bot 🤖, where you can Sell & Buy Crypto Easily ⚡️
 
 What is your objective?"""
 
@@ -38,12 +38,12 @@ After joining, click POST AD again ⚡"""
 def captcha_caption(first_name: str) -> str:
     return f"""Welcome! {first_name} 👋
 
-To Join MARCO P2P 🔥, Solve this Captcha to get accepted! ⚡"""
+To Join SFOE P2P 🔥, Solve this Captcha to get accepted! ⚡"""
 
 
 def captcha_accepted(first_name: str) -> str:
     return f"""{first_name} You are accepted!!! ✅
-Welcome To MARCO P2P 🔥
+Welcome To SFOE P2P 🔥
 
 Use /start to sell your crypto right away! ⚡"""
 
@@ -141,7 +141,7 @@ Ref: {ref_code}
 Use {BOT_USERNAME} for SAFE-SELL ⚡"""
 
 
-SAFE_SELL_LANDING = f"""Welcome to MARCO P2P Bot 💬
+SAFE_SELL_LANDING = f"""Welcome to SFOE P2P Bot 💬
 
 💵 SAFE SELL — A trusted platform to Sell Crypto 🔥 Instantly and receive SAFE & GUARANTEED 🔒 INR ₹ directly.
 
@@ -153,7 +153,7 @@ SAFE_SELL_BANNER = """✔ Instant Payments ⚡
 ✔ No Time-passers | No Scams
 ✔ Direct SAFE-SELL to us & relax
 
-Fund Purity & Safety — Guaranteed by MARCO 🔥
+Fund Purity & Safety — Guaranteed by SFOE 🔥
 Each penny you receive is 100% authentic & Guaranteed!"""
 
 PAYMENT_MODE_SELECT = "Sell your crypto in multiple methods 👇⚡"

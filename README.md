@@ -1,13 +1,13 @@
-# MARCO P2P Bot
+# SFOE P2P Bot
 
-Telegram bot rebuild for the MARCO P2P flow: P2P ad posting, captcha/group gate, SAFE SELL Express, wallet deposits/withdrawals, per-user stats, global stats, cooldowns, and admin approval.
+Telegram bot rebuild for the SFOE P2P flow: P2P ad posting, captcha/group gate, SAFE SELL Express, wallet deposits/withdrawals, per-user stats, global stats, cooldowns, and admin approval.
 
 ## What Is Included
 
 - aiogram v3 polling bot
 - SQLite by default, with SQLAlchemy async models
 - Persistent DB-backed user sessions so flows survive restarts
-- MARCO-branded `/start` cards with generated banner image
+- SFOE-branded `/start` cards with generated banner image
 - Persistent reply keyboard:
   - `POST AD`
   - `SAFE SELL [EXPRESS]`
@@ -33,7 +33,7 @@ Edit `.env`:
 - `BOT_TOKEN`: BotFather token
 - `ADMIN_IDS`: comma-separated numeric Telegram user IDs
 - `ADMIN_REVIEW_CHAT_ID`: admin group/channel for payment proof review
-- `ADS_CHANNEL_ID`: public ads channel, such as `@MARCO_P2P`
+- `ADS_CHANNEL_ID`: public ads channel, such as `@SFOE_P2P`
 - `ADS_GROUP_ID`: public ads group numeric ID
 - `REQUIRED_GROUP_1_ID` / `REQUIRED_GROUP_2_ID`: groups users must join before posting ads
 - `DEPOSIT_ADDRESSES_JSON`: token/network deposit address map

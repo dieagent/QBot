@@ -1,1 +1,1 @@
-"""Telegram routers for MARCO P2P Bot."""
+"""Telegram routers for SFOE P2P Bot."""
