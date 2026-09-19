@@ -29,6 +29,7 @@ def _settings() -> Settings:
         infura_url=None,
         infura_api_key=None,
         trongrid_api_key=None,
+        verify_min_confirmations=None,
         telegram_api_id=None,
         telegram_api_hash=None,
         telegram_phone=None,

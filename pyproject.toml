@@ -5,6 +5,7 @@ description = "SFOE P2P Telegram bot rebuild with P2P ads, safe sell, wallet, st
 requires-python = ">=3.11"
 dependencies = [
     "aiogram>=3.10,<4",
+    "aiohttp>=3.9,<4",
     "SQLAlchemy>=2.0,<3",
     "aiosqlite>=0.19,<1",
     "asyncpg>=0.30,<1",

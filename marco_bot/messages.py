@@ -202,10 +202,33 @@ After payment, ➡️ click 'CHECK PAYMENT' below to send proof 👁"""
 
 SCREENSHOT_PROMPT = "Please send a screenshot of your payment for verification 📸."
 
+TX_HASH_PROMPT = """🔎 Verify Your Payment On-Chain
+
+Paste the transaction hash / TxID of your payment below 👇
+(66 characters starting with 0x on BSC/ETH networks, or a 64-character TxID on TRON/Bitcoin)
+
+You can also attach a payment screenshot as extra proof 📸
+
+Your payment is verified directly on the blockchain before approval — sending a wrong or fake hash will fail verification."""
+
+TX_HASH_INVALID = """❌ That doesn't look like a valid transaction hash.
+
+Please paste the full transaction hash / TxID (64 hex characters, with 0x prefix on BSC/ETH networks)."""
+
+SCREENSHOT_SAVED = """📸 Screenshot saved as extra proof.
+
+Now paste the transaction hash / TxID so we can verify your payment on-chain 👇"""
+
 
 SCREENSHOT_SUBMITTED = """✅ Screenshot Submitted!
 
 Please wait for admin verification ⚡"""
+
+VERIFYING_PAYMENT = """🔎 Payment Submitted!
+
+We are verifying your transaction on the blockchain. This can take a few minutes while the network confirms it ⏳
+
+You will get a message as soon as it is confirmed ✅"""
 
 LOCKED_ACTION = "⚠ This action is disabled pending transaction verification 🔒."
 

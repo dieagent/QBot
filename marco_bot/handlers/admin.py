@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from .. import keyboards as kb
 from .. import messages as msg
+from .. import review
 from ..config import Settings
 from ..db import session_scope
 from ..models import GlobalStats, PaymentMode, RateTier, Transaction, User, utcnow
@@ -68,6 +69,7 @@ async def admin_help(message: Message) -> None:
 📊 Stats & Monitoring:
 /pending - show pending review queue
 /stats - show global stats
+/recheck TX_ID - rerun on-chain verification
 /emojiids - extract premium custom emoji IDs
 
 ⚙️ Payment & Rates:
@@ -143,6 +145,35 @@ async def pending(message: Message) -> None:
         for tx in rows:
             lines.append(f"TX {tx.tx_id} | {tx.type} | user {tx.user_id} | ${tx.amount_usd:.2f}")
         await message.answer("\n".join(lines))
+
+
+@router.message(Command("recheck"))
+async def recheck_verification(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: /recheck TX_ID")
+        return
+    tx_id = int(parts[1])
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        if not tx:
+            await message.answer(f"TX {tx_id} not found.")
+            return
+        if tx.type not in review.VERIFIABLE_TYPES or not tx.chain_tx_hash:
+            await message.answer(f"TX {tx_id} has no on-chain verification to rerun.")
+            return
+        if tx.status != "pending":
+            await message.answer(f"TX {tx_id} is already {tx.status}.")
+            return
+        if tx.verify_status == "verified":
+            await message.answer(f"TX {tx_id} is already verified — you can approve it from the review card.")
+            return
+        tx.verify_status = "verifying"
+        tx.verify_detail = None
+    await review.schedule_verification(settings(), message.bot, tx_id)
+    await message.answer(f"🔎 Verification re-run started for TX {tx_id}.")
 
 
 @router.message(Command("stats"))
@@ -400,6 +431,22 @@ async def approve_transaction(callback: CallbackQuery, tx_id: int) -> None:
                 return
             user.wallet_balance = as_money(user.wallet_balance - tx.amount_usd)
         elif tx.type in {"express_sell", "wallet_deposit"}:
+            # Deposits on verifiable chains must be confirmed on-chain before
+            # anything can be credited. None/"manual" = no verifier exists for
+            # this chain (or a pre-upgrade legacy row), so review stays manual.
+            verify_status = tx.verify_status or "manual"
+            if verify_status == "verifying":
+                await callback.answer("On-chain verification is still running — approve once it confirms.", show_alert=True)
+                return
+            if verify_status == "failed":
+                await callback.answer(
+                    f"On-chain verification FAILED: {tx.verify_detail or 'payment not found'}. Reject the TX or retry with /recheck {tx.tx_id}.",
+                    show_alert=True,
+                )
+                return
+            if verify_status == "unsubmitted":
+                await callback.answer("No transaction hash submitted — on-chain verification is required before approval.", show_alert=True)
+                return
             if tx.type == "wallet_deposit":
                 user.wallet_balance = as_money(user.wallet_balance + tx.amount_usd)
             await add_safe_sell_stats(session, user, tx.amount_usd, settings().timezone)

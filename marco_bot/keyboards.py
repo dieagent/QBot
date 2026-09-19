@@ -221,6 +221,14 @@ def wallet_menu() -> InlineKeyboardMarkup:
     )
 
 
+def verify_check(tx_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 CHECK STATUS", callback_data=f"verify:check:{tx_id}")],
+        ]
+    )
+
+
 def admin_review(tx_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

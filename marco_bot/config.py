@@ -40,9 +40,32 @@ class Settings:
     infura_url: str | None
     infura_api_key: str | None
     trongrid_api_key: str | None
+    verify_min_confirmations: int | None
     telegram_api_id: str | None
     telegram_api_hash: str | None
     telegram_phone: str | None
+    # Optional webhook/serverless settings (defaults keep legacy constructors working).
+    webhook_url: str | None = None
+    webhook_secret: str | None = None
+    # Menu loading animations (UI_ANIMATIONS=off disables).
+    ui_animations: bool = True
+
+    @property
+    def webhook_mode(self) -> bool:
+        """True when running as a serverless webhook bot (e.g. Vercel).
+
+        Enabled either explicitly via WEBHOOK_URL, or implicitly when the
+        runtime advertises a Vercel deployment domain.
+        """
+        return bool(self.webhook_url or os.getenv("VERCEL_URL"))
+
+    def resolved_webhook_url(self) -> str | None:
+        if self.webhook_url:
+            return self.webhook_url
+        vercel_url = os.getenv("VERCEL_URL")
+        if vercel_url:
+            return f"https://{vercel_url}/api/webhook"
+        return None
 
 
 def _split_ints(value: str | None) -> list[int]:
@@ -75,6 +98,23 @@ def _optional_env(name: str) -> str | None:
     return value or None
 
 
+def _optional_int_env(name: str) -> int | None:
+    value = _optional_env(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = _optional_env(name)
+    if value is None:
+        return default
+    return value.lower() not in {"0", "off", "false", "no"}
+
+
 def _required_groups_from_env() -> list[ConfiguredGroup]:
     groups: list[ConfiguredGroup] = []
     for idx in (1, 2):
@@ -87,12 +127,13 @@ def _required_groups_from_env() -> list[ConfiguredGroup]:
 
 def _normalize_database_url(database_url: str) -> str:
     if database_url.startswith("postgres://"):
-        return "postgresql+asyncpg://" + database_url.removeprefix("postgres://")
-    if database_url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + database_url.removeprefix("postgresql://")
-    if database_url.startswith("sqlite:///"):
+        database_url = "postgresql+asyncpg://" + database_url.removeprefix("postgres://")
+    elif database_url.startswith("postgresql://"):
+        database_url = "postgresql+asyncpg://" + database_url.removeprefix("postgresql://")
+    elif database_url.startswith("sqlite:///"):
         return "sqlite+aiosqlite:///" + database_url.removeprefix("sqlite:///")
-    return database_url
+    # asyncpg does not understand the libpq-style sslmode param.
+    return database_url.replace("sslmode=", "ssl=")
 
 
 def _deposit_addresses_from_env() -> dict[str, dict[str, str]]:
@@ -143,6 +184,10 @@ def load_settings() -> Settings:
         infura_url=_optional_env("INFURA_URL"),
         infura_api_key=_optional_env("INFURA_API_KEY"),
         trongrid_api_key=_optional_env("TRONGRID_API_KEY"),
+        verify_min_confirmations=_optional_int_env("VERIFY_MIN_CONFIRMATIONS"),
+        webhook_url=_optional_env("WEBHOOK_URL"),
+        webhook_secret=_optional_env("WEBHOOK_SECRET"),
+        ui_animations=_bool_env("UI_ANIMATIONS", True),
         telegram_api_id=_optional_env("TELEGRAM_API_ID"),
         telegram_api_hash=_optional_env("TELEGRAM_API_HASH"),
         telegram_phone=_optional_env("TELEGRAM_PHONE"),

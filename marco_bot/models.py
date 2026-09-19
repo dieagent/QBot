@@ -64,6 +64,11 @@ class Transaction(Base):
     deposit_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     proof_file_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     withdrawal_destination: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chain_tx_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # None (legacy rows) and "manual" mean: no on-chain verifier was available.
+    verify_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    verified_amount: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
+    verify_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
