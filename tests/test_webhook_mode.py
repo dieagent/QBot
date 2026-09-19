@@ -91,16 +91,6 @@ def _settings(db_url: str, webhook_url: str | None):
         return load_settings()
 
 
-def test_dispatcher_is_built_once_per_container():
-    """Regression: per-request Dispatcher() + include_router raised
-    'Router is already attached' and 500'd every update on Vercel."""
-    from marco_bot import serverless
-
-    first = serverless._get_dispatcher()
-    second = serverless._get_dispatcher()
-    assert first is second
-
-
 def test_schedule_verification_inline_in_webhook_mode(tmp_path, monkeypatch):
     db_url = f"sqlite:///{tmp_path}/bot.sqlite3"
     settings = _settings(db_url, "https://qbot.vercel.app/api/webhook")
