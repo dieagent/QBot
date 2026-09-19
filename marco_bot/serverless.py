@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 _settings: Settings | None = None
+_dispatcher: Dispatcher | None = None
 _initialized = False
 
 DATABASE_URL_ERROR = (
@@ -68,9 +69,25 @@ async def ensure_initialized() -> Settings:
     await init_db(settings)
     admin.configure(settings)
     user.configure(settings)
+    _get_dispatcher()
     await _ensure_webhook(settings)
     _initialized = True
     return settings
+
+
+def _get_dispatcher() -> Dispatcher:
+    """The one dispatcher per container.
+
+    aiogram routers attach to exactly one dispatcher; re-including them per
+    request raised "Router is already attached" and broke the bot. Build it
+    once and reuse it for every update.
+    """
+    global _dispatcher
+    if _dispatcher is None:
+        _dispatcher = Dispatcher()
+        _dispatcher.include_router(admin.router)
+        _dispatcher.include_router(user.router)
+    return _dispatcher
 
 
 async def _ensure_webhook(settings: Settings) -> None:
@@ -115,9 +132,7 @@ async def handle_update(update_data: dict, secret_header: str | None) -> bool:
         except Exception:
             logger.warning("pending sweep failed", exc_info=True)
 
-        dispatcher = Dispatcher()
-        dispatcher.include_router(admin.router)
-        dispatcher.include_router(user.router)
+        dispatcher = _get_dispatcher()
         update = Update.model_validate(update_data)
         await dispatcher.feed_update(bot, update)
     finally:
