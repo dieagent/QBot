@@ -40,11 +40,42 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
             raise
 
 
+def _ensure_transaction_columns_sync(conn) -> None:
+    """Idempotently add on-chain verification columns to existing databases.
+
+    create_all only creates missing tables, so deployments with an existing
+    transactions table need these ALTERs. Safe to run on every startup.
+    """
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        rows = conn.exec_driver_sql("PRAGMA table_info('transactions')").fetchall()
+        existing = {row[1] for row in rows}
+    elif "postgres" in dialect:
+        rows = conn.exec_driver_sql(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'transactions'"
+        ).fetchall()
+        existing = {row[0] for row in rows}
+    else:
+        return
+    if not existing:
+        return  # table does not exist yet; create_all already handled fresh installs
+    additions = [
+        ("chain_tx_hash", "TEXT"),
+        ("verify_status", "VARCHAR(16)"),
+        ("verified_amount", "NUMERIC(24, 8)"),
+        ("verify_detail", "TEXT"),
+    ]
+    for column_name, column_type in additions:
+        if column_name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE transactions ADD COLUMN {column_name} {column_type}")
+
+
 async def init_db(settings: Settings) -> None:
     if Engine is None:
         raise RuntimeError("Database is not configured. Call configure_database() first.")
     async with Engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_transaction_columns_sync)
 
     async with session_scope() as session:
         stats = await session.get(GlobalStats, 1)

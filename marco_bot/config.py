@@ -40,6 +40,7 @@ class Settings:
     infura_url: str | None
     infura_api_key: str | None
     trongrid_api_key: str | None
+    verify_min_confirmations: int | None
     telegram_api_id: str | None
     telegram_api_hash: str | None
     telegram_phone: str | None
@@ -73,6 +74,16 @@ def _json_env(name: str, default: Any) -> Any:
 def _optional_env(name: str) -> str | None:
     value = os.getenv(name, "").strip()
     return value or None
+
+
+def _optional_int_env(name: str) -> int | None:
+    value = _optional_env(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _required_groups_from_env() -> list[ConfiguredGroup]:
@@ -143,6 +154,7 @@ def load_settings() -> Settings:
         infura_url=_optional_env("INFURA_URL"),
         infura_api_key=_optional_env("INFURA_API_KEY"),
         trongrid_api_key=_optional_env("TRONGRID_API_KEY"),
+        verify_min_confirmations=_optional_int_env("VERIFY_MIN_CONFIRMATIONS"),
         telegram_api_id=_optional_env("TELEGRAM_API_ID"),
         telegram_api_hash=_optional_env("TELEGRAM_API_HASH"),
         telegram_phone=_optional_env("TELEGRAM_PHONE"),

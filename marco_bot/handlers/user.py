@@ -13,9 +13,11 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, select
 
+from .. import chainverify
 from .. import constants as c
 from .. import keyboards as kb
 from .. import messages as msg
+from .. import review
 from .. import states
 from ..config import Settings
 from ..db import session_scope
@@ -176,25 +178,88 @@ async def proof_photo(message: Message) -> None:
 
         data = session_data(bot_session)
         proof = message.photo[-1].file_id
-        tx_type = data.get("tx_type", "express_sell")
-        tx = Transaction(
-            user_id=user.user_id,
-            type=tx_type,
-            coin=data.get("token"),
-            chain=data.get("chain"),
-            amount_usd=Decimal(str(data.get("amount_usd", "0"))),
-            amount_inr=Decimal(str(data.get("amount_inr", "0"))),
-            payment_mode=data.get("payment_mode"),
-            deposit_address=data.get("deposit_address"),
-            proof_file_id=proof,
-            status="pending",
+        supported, _ = chainverify.support_status(settings(), data.get("token"), data.get("chain"), data.get("deposit_address"))
+        if supported:
+            # On-chain verification is available: keep the photo as extra proof
+            # and wait for the transaction hash instead of trusting the image.
+            data["proof_file_id"] = proof
+            bot_session.data_json = json.dumps(data)
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.SCREENSHOT_SAVED)
+            return
+
+        manual_tx = build_deposit_tx(user, data, proof_file_id=proof, verify_status="manual")
+        session.add(manual_tx)
+        user.is_locked = True
+        await clear_flow(session, user.user_id)
+        await session.flush()
+        await review.notify_admin_review(message.bot, settings(), user, manual_tx)
+        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.SCREENSHOT_SUBMITTED, reply_markup=kb.persistent_menu(user))
+
+
+def build_deposit_tx(
+    user: User,
+    data: dict,
+    proof_file_id: str | None,
+    verify_status: str,
+    chain_tx_hash: str | None = None,
+) -> Transaction:
+    return Transaction(
+        user_id=user.user_id,
+        type=data.get("tx_type", "express_sell"),
+        coin=data.get("token"),
+        chain=data.get("chain"),
+        amount_usd=Decimal(str(data.get("amount_usd", "0"))),
+        amount_inr=Decimal(str(data.get("amount_inr", "0"))),
+        payment_mode=data.get("payment_mode"),
+        deposit_address=data.get("deposit_address"),
+        proof_file_id=proof_file_id,
+        chain_tx_hash=chain_tx_hash,
+        verify_status=verify_status,
+        status="pending",
+    )
+
+
+async def handle_tx_submission(message: Message, user: User, text: str) -> None:
+    submitted: tuple[Transaction, User] | None = None
+    async with session_scope() as session:
+        user = await session.get(User, user.user_id)
+        if not user or user.is_locked:
+            await send_tracked_menu_message(session, message.bot, message.from_user.id, message.chat.id, msg.LOCKED_ACTION, reply_markup=kb.persistent_menu(user))
+            return
+        bot_session = await get_or_create_session(session, user.user_id)
+        data = session_data(bot_session)
+        token = data.get("token")
+        chain = data.get("chain")
+        address = data.get("deposit_address")
+        supported, _ = chainverify.support_status(settings(), token, chain, address)
+        if not supported:
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.SCREENSHOT_PROMPT)
+            return
+        tx_hash = chainverify.normalize_tx_hash(text, chain or "")
+        if not tx_hash:
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.TX_HASH_INVALID)
+            return
+        duplicate = await session.execute(
+            select(Transaction.tx_id).where(
+                Transaction.chain_tx_hash == tx_hash,
+                Transaction.status.in_(("pending", "approved")),
+            )
         )
+        if duplicate.scalar_one_or_none() is not None:
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, "⚠️ This transaction hash was already submitted. Please check it or contact support.", reply_markup=kb.persistent_menu(user))
+            return
+        tx = build_deposit_tx(user, data, proof_file_id=data.get("proof_file_id"), verify_status="verifying", chain_tx_hash=tx_hash)
         session.add(tx)
         user.is_locked = True
         await clear_flow(session, user.user_id)
         await session.flush()
-        await notify_admin_review(message, user, tx)
-        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.SCREENSHOT_SUBMITTED, reply_markup=kb.persistent_menu(user))
+        submitted = (tx, user)
+    if submitted:
+        tx, user_obj = submitted
+        await review.notify_admin_review(message.bot, settings(), user_obj, tx)
+        async with session_scope() as session:
+            await send_tracked_menu_message(session, message.bot, message.from_user.id, message.chat.id, msg.VERIFYING_PAYMENT, reply_markup=kb.persistent_menu(user_obj))
+        asyncio.create_task(review.run_verification_task(settings(), message.bot, tx.tx_id))
 
 
 @router.message(F.text)
@@ -249,6 +314,8 @@ async def text_message(message: Message) -> None:
         await handle_withdraw_amount(message, user, text)
     elif state == states.WALLET_WITHDRAW_DEST:
         await handle_withdraw_destination(message, user, text)
+    elif state in {states.EXPRESS_AWAITING_SCREENSHOT, states.WALLET_AWAITING_SCREENSHOT}:
+        await handle_tx_submission(message, user, text)
     else:
         await send_welcome(message, user)
 
@@ -703,9 +770,12 @@ async def request_screenshot(callback: CallbackQuery, user: User) -> None:
         else:
             await callback.answer("No payment is awaiting proof.", show_alert=True)
             return
+        data = session_data(bot_session)
+        supported, _ = chainverify.support_status(settings(), data.get("token"), data.get("chain"), data.get("deposit_address"))
+        prompt = msg.TX_HASH_PROMPT if supported else msg.SCREENSHOT_PROMPT
         await delete_callback_message(callback)
         await callback.answer()
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.SCREENSHOT_PROMPT)
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, prompt)
 
 
 async def open_wallet(message: Message, user: User) -> None:
@@ -812,7 +882,7 @@ async def handle_withdraw_destination(message: Message, user: User, text: str) -
         user.is_locked = True
         await clear_flow(session, user.user_id)
         await session.flush()
-        await notify_admin_review(message, user, tx)
+        await review.notify_admin_review(message.bot, settings(), user, tx)
         await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.withdraw_queued(tx.tx_id), reply_markup=kb.persistent_menu(user))
 
 
@@ -960,51 +1030,6 @@ async def render_state(message: Message, user: User, state: str) -> None:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.WITHDRAW_DESTINATION, reply_markup=kb.back())
         else:
             await send_welcome(message, user)
-
-
-async def notify_admin_review(message: Message, user: User, tx: Transaction) -> None:
-    caption = admin_review_text(user, tx)
-    destinations: list[int | str] = []
-    if settings().admin_review_chat_id:
-        destinations.append(settings().admin_review_chat_id)
-    destinations.extend(settings().admin_ids)
-    if not destinations:
-        await message.answer("Admin review destination is not configured. Add ADMIN_REVIEW_CHAT_ID or ADMIN_IDS.")
-        return
-    for chat_id in destinations:
-        try:
-            if tx.proof_file_id:
-                await message.bot.send_photo(chat_id, tx.proof_file_id, caption=caption, reply_markup=kb.admin_review(tx.tx_id))
-            else:
-                await message.bot.send_message(chat_id, caption, reply_markup=kb.admin_review(tx.tx_id))
-        except (TelegramBadRequest, TelegramForbiddenError):
-            continue
-
-
-def admin_review_text(user: User, tx: Transaction) -> str:
-    username = f"@{user.username}" if user.username else str(user.user_id)
-    if tx.type == "withdrawal":
-        return f"""🧾 Pending Withdrawal
-
-TX: {tx.tx_id}
-User: {username}
-Telegram ID: {user.user_id}
-Amount: ${tx.amount_usd:.2f}
-Destination:
-{tx.withdrawal_destination}"""
-    return f"""🧾 Pending Verification
-
-TX: {tx.tx_id}
-Type: {tx.type}
-User: {username}
-Telegram ID: {user.user_id}
-Token: {tx.coin}
-Chain: {tx.chain}
-Amount USD: ${tx.amount_usd:.2f}
-Expected INR: ₹{tx.amount_inr:.2f}
-Payment Mode: {tx.payment_mode}
-Deposit Address:
-{tx.deposit_address}"""
 
 
 async def unique_ref_code(session) -> str:

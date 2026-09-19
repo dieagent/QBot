@@ -15,9 +15,9 @@ Telegram bot rebuild for the SFOE P2P flow: P2P ad posting, captcha/group gate, 
   - `📊 My Stats`
   - `📈 Global Stats`
 - POST AD group gate, captcha, ad builder, preview, publish, public channel/group posting, and 3-hour cooldown
-- SAFE SELL Express amount/rate calculation, token/network selection, deposit address display, screenshot proof upload, and admin review
+- SAFE SELL Express amount/rate calculation, token/network selection, deposit address display, **on-chain payment verification**, and admin review
 - Wallet add funds, withdraw queue, account lock while pending, and admin approval/rejection
-- Admin commands for pending queue, stats, payment-mode availability, rates, and broadcasts
+- Admin commands for pending queue, stats, payment-mode availability, rates, broadcasts, and verification re-runs
 
 ## Setup
 
@@ -90,9 +90,51 @@ Use `/emojiids` (or `/emojiiids`) as a reply to a message that contains premium/
 
 The bot runtime now uses the updated premium emoji IDs from the latest deployment branch.
 
+## On-Chain Verification
+
+Deposits (SAFE SELL Express and wallet top-ups) are verified directly on the
+blockchain before an admin can credit anything. Screenshots alone are no
+longer accepted on supported networks.
+
+Flow:
+
+1. After sending payment, the user taps **CHECK PAYMENT** and pastes the
+   transaction hash / TxID (a screenshot can be added as extra proof).
+2. The bot checks the transaction on-chain in the background
+   (~6 minutes max) and shows the result on the admin review card.
+3. The **Approve** button only works once verification is `✅ VERIFIED`
+   (or `⚠️ MANUAL` for networks without an automatic verifier).
+
+What gets verified:
+
+| Network | Provider | Check |
+| --- | --- | --- |
+| USDT/USDC on ERC20 / BEP20 / MATIC / BASE / ARBITRUM / OPTIMISM | Etherscan V2, then Infura, then public RPC fallback | token contract, recipient, amount ≥ expected USD, confirmations |
+| ETH / BNB native transfers | same as above | recipient, amount reported (not USD-pegged), confirmations |
+| USDT on TRC20 | TronGrid (`only_confirmed`) | token contract, recipient, amount |
+| BTC on Bitcoin | blockstream.info (no key needed) | output pays the address, ≥1 confirmation |
+
+Networks without a trusted registry entry (e.g. SOL) and chains with no
+configured deposit address fall back to the old screenshot-only review, and
+the admin card says `⚠️ MANUAL` explicitly. A transaction hash can only be
+credited once — resubmitted hashes are refused.
+
+Useful settings:
+
+- `ETHERSCAN_API_KEY` — one Etherscan V2 key covers every EVM chain; free
+  plans may not include BSC, in which case the bot automatically falls back
+  to Infura / public RPC endpoints.
+- `INFURA_API_KEY` / `INFURA_URL` — used as fallback RPC for
+  Ethereum/Polygon/Arbitrum/Optimism/Base.
+- `TRONGRID_API_KEY` — optional but avoids rate limits on TRON queries.
+- `VERIFY_MIN_CONFIRMATIONS` — optional override of the per-chain
+  confirmation targets (defaults: 12 ETH, 15 BSC, 32 Polygon, 1 BTC).
+- `/recheck TX_ID` — rerun verification for a transaction whose payment
+  confirmed after the bot timed out.
+
 Admin approval buttons are attached to every pending screenshot/withdrawal submission:
 
-- Approve unlocks the user.
+- Approve unlocks the user. For `express_sell` / `wallet_deposit`, Approve is blocked until on-chain verification is `✅ VERIFIED` (or `⚠️ MANUAL` on unsupported networks).
 - Approve for `express_sell` increments user and global SAFE-SOLD stats.
 - Approve for `wallet_deposit` credits wallet balance and increments user/global SAFE-SOLD stats.
 - Approve for `withdrawal` debits wallet balance.
