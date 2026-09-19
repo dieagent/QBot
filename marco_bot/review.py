@@ -1,10 +1,19 @@
-"""Admin review cards and the background on-chain verification task.
+"""Admin review cards and on-chain verification orchestration.
 
 A deposit (SAFE SELL / wallet top-up) only becomes creditable when:
 
 1. the user submits a real transaction hash, and
-2. `run_verification_task` confirms it on-chain (chainverify), and
+2. verification confirms it on-chain (chainverify), and
 3. an admin clicks Approve (guard in handlers/admin.py).
+
+Two runtimes are supported:
+
+- **Long polling** (local / Railway): a background asyncio task polls for
+  up to ~6 minutes (`schedule_verification` spawns `run_verification_task`).
+- **Serverless webhooks** (Vercel): background tasks die with the request,
+  so verification happens via short inline attempts at submit time, a
+  per-transaction "check status" button, `/recheck`, and `sweep_pending`
+  which retries a few pending deposits on each incoming webhook update.
 
 Chains without an automatic verifier fall back to verify_status="manual"
 and keep the old screenshot-based flow.
@@ -27,6 +36,13 @@ VERIFIABLE_TYPES = {"express_sell", "wallet_deposit"}
 
 MAX_ATTEMPTS = 18          # ~6 minutes total with the interval below
 ATTEMPT_INTERVAL_SECONDS = 20
+
+# Serverless (webhook) behaviour: attempts done inline at submit time.
+SERVERLESS_INLINE_ATTEMPTS = 2
+SERVERLESS_INLINE_INTERVAL = 2.5
+# Sweep budget per incoming webhook update.
+SWEEP_MAX_TXS = 3
+SWEEP_PER_TX_TIMEOUT = 6.0
 
 logger = logging.getLogger(__name__)
 
@@ -107,71 +123,160 @@ async def _notify_user(bot: Bot, user_id: int, text: str) -> None:
         pass
 
 
-async def run_verification_task(settings: Settings, bot: Bot, tx_id: int) -> None:
-    """Poll chain APIs until the deposit tx verifies, fails, or times out."""
+# ---------------------------------------------------------------------------
+# Core one-attempt verification
+# ---------------------------------------------------------------------------
+
+
+async def verify_tx_attempt(settings: Settings, bot: Bot, tx_id: int) -> str:
+    """Run a single on-chain verification attempt for one transaction.
+
+    Returns the resulting verify_status: "verified", "failed" or "pending"
+    (still confirming — row left in "verifying"). Rows that disappeared or
+    were already resolved return "resolved". Notifications are sent when a
+    final state is reached.
+    """
     from . import chainverify  # local import avoids a module cycle
 
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        if not tx or tx.status != "pending" or tx.verify_status != "verifying":
+            return "resolved"
+        token = tx.coin or ""
+        chain = tx.chain or ""
+        address = tx.deposit_address or ""
+        expected = Decimal(str(tx.amount_usd))
+        tx_hash = tx.chain_tx_hash or ""
+
+    result = await chainverify.verify_payment(settings, token, chain, address, expected, tx_hash)
+
+    if result.status == chainverify.STATUS_PENDING:
+        return "pending"
+
+    final_status = "verified" if result.status == chainverify.STATUS_VERIFIED else "failed"
+    detail = result.detail or ("verification failed" if final_status == "failed" else "")
+
+    user: User | None = None
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        if not tx or tx.status != "pending" or tx.verify_status != "verifying":
+            return "resolved"  # admin resolved it while we were verifying
+        tx.verify_status = final_status
+        tx.verify_detail = detail
+        if result.amount is not None:
+            tx.verified_amount = result.amount
+        user = await session.get(User, tx.user_id)
+
+    if user is None:
+        return final_status
+
+    if final_status == "verified":
+        await _notify_user(
+            bot,
+            user.user_id,
+            "✅ Payment confirmed on-chain!\n\n"
+            f"{detail}\n\n"
+            "Your transaction is waiting for admin approval. "
+            "This usually takes a few minutes ⚡",
+        )
+    else:
+        await _notify_user(
+            bot,
+            user.user_id,
+            "⚠️ We could not confirm your payment on-chain.\n\n"
+            "Our team will review it shortly. If this takes long, please contact support.",
+        )
+    await notify_admin_review(bot, settings, user, tx)
+    return final_status
+
+
+# ---------------------------------------------------------------------------
+# Long-polling runtime: background polling task
+# ---------------------------------------------------------------------------
+
+async def run_verification_task(settings: Settings, bot: Bot, tx_id: int) -> None:
+    """Poll chain APIs until the deposit tx verifies, fails, or times out."""
     try:
         for attempt in range(MAX_ATTEMPTS):
-            async with session_scope() as session:
-                tx = await session.get(Transaction, tx_id)
-                if not tx or tx.status != "pending" or tx.verify_status != "verifying":
-                    return
-                token = tx.coin or ""
-                chain = tx.chain or ""
-                address = tx.deposit_address or ""
-                expected = Decimal(str(tx.amount_usd))
-                tx_hash = tx.chain_tx_hash or ""
-
-            result = await chainverify.verify_payment(settings, token, chain, address, expected, tx_hash)
-
-            if result.status == chainverify.STATUS_PENDING and attempt < MAX_ATTEMPTS - 1:
-                await asyncio.sleep(ATTEMPT_INTERVAL_SECONDS)
-                continue
-
-            final_status: str
-            detail: str
-            if result.status == chainverify.STATUS_VERIFIED:
-                final_status = "verified"
-                detail = result.detail
-            elif result.status == chainverify.STATUS_PENDING:
-                final_status = "failed"
-                detail = f"Not confirmed on-chain within {MAX_ATTEMPTS * ATTEMPT_INTERVAL_SECONDS // 60} minutes. Recheck with /recheck {tx_id} once it confirms."
-            else:
-                final_status = "failed"
-                detail = result.detail or "verification failed"
-
-            user: User | None = None
-            async with session_scope() as session:
-                tx = await session.get(Transaction, tx_id)
-                if not tx or tx.status != "pending" or tx.verify_status != "verifying":
-                    return  # admin resolved it while we were verifying
-                tx.verify_status = final_status
-                tx.verify_detail = detail
-                if result.amount is not None:
-                    tx.verified_amount = result.amount
-                user = await session.get(User, tx.user_id)
-
-            if user is None:
+            outcome = await verify_tx_attempt(settings, bot, tx_id)
+            if outcome != "pending":
                 return
+            await asyncio.sleep(ATTEMPT_INTERVAL_SECONDS)
 
-            if final_status == "verified":
-                await _notify_user(
-                    bot,
-                    user.user_id,
-                    "✅ Payment confirmed on-chain!\n\n"
-                    f"{detail}\n\n"
-                    "Your transaction is waiting for admin approval. "
-                    "This usually takes a few minutes ⚡",
-                )
-            else:
-                await _notify_user(
-                    bot,
-                    user.user_id,
-                    "⚠️ We could not confirm your payment on-chain.\n\n"
-                    "Our team will review it shortly. If this takes long, please contact support.",
-                )
+        # Give up waiting: mark failed with an actionable note.
+        user: User | None = None
+        async with session_scope() as session:
+            tx = await session.get(Transaction, tx_id)
+            if not tx or tx.status != "pending" or tx.verify_status != "verifying":
+                return
+            tx.verify_status = "failed"
+            tx.verify_detail = f"Not confirmed on-chain within {MAX_ATTEMPTS * ATTEMPT_INTERVAL_SECONDS // 60} minutes. Recheck with /recheck {tx_id} once it confirms."
+            user = await session.get(User, tx.user_id)
+        if user is not None:
+            await _notify_user(
+                bot,
+                user.user_id,
+                "⚠️ We could not confirm your payment on-chain.\n\n"
+                "Our team will review it shortly. If this takes long, please contact support.",
+            )
             await notify_admin_review(bot, settings, user, tx)
-            return
     except Exception:
         logger.exception("Verification task crashed for TX %s", tx_id)
+
+
+async def _verify_inline(settings: Settings, bot: Bot, tx_id: int) -> str:
+    """Bounded verification usable inside a single serverless request."""
+    outcome = "pending"
+    for attempt in range(SERVERLESS_INLINE_ATTEMPTS):
+        outcome = await verify_tx_attempt(settings, bot, tx_id)
+        if outcome != "pending":
+            return outcome
+        if attempt < SERVERLESS_INLINE_ATTEMPTS - 1:
+            await asyncio.sleep(SERVERLESS_INLINE_INTERVAL)
+    return outcome
+
+
+async def schedule_verification(settings: Settings, bot: Bot, tx_id: int) -> str | None:
+    """Dispatch verification appropriate for the runtime.
+
+    Polling mode: spawns the background task (returns None immediately).
+    Webhook mode: runs bounded inline attempts and returns the outcome so
+    the caller can tell the user what happened right away.
+    """
+    if not settings.webhook_mode:
+        asyncio.create_task(run_verification_task(settings, bot, tx_id))
+        return None
+    return await _verify_inline(settings, bot, tx_id)
+
+
+# ---------------------------------------------------------------------------
+# Serverless sweep: retry a few pending deposits per incoming webhook update
+# ---------------------------------------------------------------------------
+
+async def sweep_pending(settings: Settings, bot: Bot, max_txs: int = SWEEP_MAX_TXS) -> int:
+    """Run one bounded verification attempt for each still-pending deposit.
+
+    Called on incoming webhook updates so deposits keep getting re-checked
+    even though serverless functions cannot host background tasks.
+    Returns how many transactions were checked.
+    """
+    from sqlalchemy import select
+
+    async with session_scope() as session:
+        rows = await session.execute(
+            select(Transaction.tx_id)
+            .where(Transaction.status == "pending", Transaction.verify_status == "verifying")
+            .order_by(Transaction.created_at)
+            .limit(max_txs)
+        )
+        tx_ids = [row[0] for row in rows.all()]
+
+    checked = 0
+    for tx_id in tx_ids:
+        try:
+            async with asyncio.timeout(SWEEP_PER_TX_TIMEOUT):
+                await verify_tx_attempt(settings, bot, tx_id)
+                checked += 1
+        except Exception:  # sweep must never break update handling
+            logger.warning("Sweep check timed out/failed for TX %s", tx_id)
+    return checked

@@ -15,9 +15,20 @@ SessionFactory: async_sessionmaker[AsyncSession] | None = None
 Engine: AsyncEngine | None = None
 
 
-def configure_database(database_url: str) -> None:
+def configure_database(database_url: str, *, null_pool: bool = False) -> None:
+    """Configure the global engine/session factory.
+
+    null_pool=True is for serverless runtimes (Vercel): connections are never
+    retained, so one engine survives sequential event loops inside a
+    long-lived function container.
+    """
     global Engine, SessionFactory
-    engine = create_async_engine(database_url, future=True)
+    kwargs: dict = {"future": True}
+    if null_pool:
+        from sqlalchemy.pool import NullPool
+
+        kwargs["poolclass"] = NullPool
+    engine = create_async_engine(database_url, **kwargs)
     Engine = engine
     SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 

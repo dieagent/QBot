@@ -61,6 +61,40 @@ This is a polling Telegram bot, so it does not need an HTTP port.
 
 See `RAILWAY_DEPLOY.md` for the full GitHub/Railway checklist.
 
+## Deploy On Vercel (webhook mode)
+
+Long polling cannot run on Vercel, so the bot ships a webhook runtime:
+`api/webhook.py` serves `https://<your-app>.vercel.app/api/webhook`.
+
+1. Import the GitHub repo into Vercel (Python is detected automatically).
+2. Set the environment variables from `.env.example`, with production values:
+   - `DATABASE_URL` — **must be a real Postgres URL**
+     (`postgresql://user:pass@host:5432/db?sslmode=require`). A Railway-style
+     `${{Postgres.DATABASE_URL}}` reference does not resolve on Vercel and the
+     function will refuse to boot (SQLite would silently lose ledger data).
+     Reuse your Railway Postgres "public" connection string or any hosted
+     Postgres (Neon, Supabase, Vercel Postgres).
+   - `WEBHOOK_URL` — `https://<your-production-domain>.vercel.app/api/webhook`
+     (set it explicitly so redeploys never break the Telegram webhook).
+   - `WEBHOOK_SECRET` — any random string; the function rejects webhook
+     requests that do not carry it.
+   - The rest is the same as the Railway deployment.
+3. Deploy, then open `https://<your-app>.vercel.app/api/webhook` once — the
+   first request performs cold-start init and registers the webhook with
+   Telegram. It shows `{ "ok": true, "mode": "webhook" }` when healthy.
+
+Serverless limitations are handled by design:
+
+- Function max duration is configured to 60s (`vercel.json`); Hobby plans
+  default to 10s otherwise.
+- Background tasks freeze after each request, so deposit verification runs
+  as: bounded inline attempts on submit + **CHECK STATUS** button +
+  `/recheck TX_ID` + a small sweep of pending deposits on every incoming
+  update. Worst case, verification completes on the user's/admin's next tap.
+- The engine uses `NullPool` so one container survives sequential requests.
+- Long polling (`main.py`) stays as the entrypoint for Railway/local runs;
+  it is unused on Vercel.
+
 ## Deposit Address Format
 
 Example:

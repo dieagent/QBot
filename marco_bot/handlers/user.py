@@ -258,8 +258,9 @@ async def handle_tx_submission(message: Message, user: User, text: str) -> None:
         tx, user_obj = submitted
         await review.notify_admin_review(message.bot, settings(), user_obj, tx)
         async with session_scope() as session:
-            await send_tracked_menu_message(session, message.bot, message.from_user.id, message.chat.id, msg.VERIFYING_PAYMENT, reply_markup=kb.persistent_menu(user_obj))
-        asyncio.create_task(review.run_verification_task(settings(), message.bot, tx.tx_id))
+            await message.bot.send_message(message.chat.id, msg.VERIFYING_PAYMENT, reply_markup=kb.verify_check(tx.tx_id))
+            await send_tracked_menu_message(session, message.bot, message.from_user.id, message.chat.id, "You can tap CHECK STATUS above anytime 👆", reply_markup=kb.persistent_menu(user_obj))
+        await review.schedule_verification(settings(), message.bot, tx.tx_id)
 
 
 @router.message(F.text)
@@ -357,11 +358,13 @@ async def callbacks(callback: CallbackQuery) -> None:
         await callback.answer()
         await handle_captcha_answer(callback.message, user, data.rsplit(":", 1)[1])
         return
-    if locked and data not in {"wallet:open"}:
+    if locked and not (data == "wallet:open" or data.startswith("verify:check:")):
         await callback.answer(msg.LOCKED_ACTION, show_alert=True)
         return
 
-    if data.startswith("ad:side:"):
+    if data.startswith("verify:check:"):
+        await handle_verify_check(callback, user, data.rsplit(":", 1)[1])
+    elif data.startswith("ad:side:"):
         await set_ad_side(callback, user, data.rsplit(":", 1)[1])
     elif data.startswith("ad:coin:"):
         await set_ad_coin(callback, user, data.rsplit(":", 1)[1])
@@ -417,6 +420,42 @@ def is_global_stats(text: str) -> bool:
 
 def is_locked_entry(text: str) -> bool:
     return text in {c.POST_AD_BUTTON, c.SAFE_SELL_BUTTON, c.WALLET_BUTTON, c.MY_STATS_BUTTON} or text.startswith("POST AD ⏳")
+
+
+async def handle_verify_check(callback: CallbackQuery, user: User, tx_id_raw: str) -> None:
+    try:
+        tx_id = int(tx_id_raw)
+    except ValueError:
+        await callback.answer("Invalid transaction.", show_alert=True)
+        return
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        belongs = tx is not None and tx.user_id == user.user_id
+        tx_status = tx.status if tx else None
+        tx_verify = tx.verify_status if tx else None
+        tx_detail = tx.verify_detail if tx else None
+    if not belongs:
+        await callback.answer("Transaction not found.", show_alert=True)
+        return
+    if tx_verify == "verified":
+        await callback.answer("✅ Verified on-chain! Waiting for admin approval.", show_alert=True)
+        return
+    if tx_verify == "manual":
+        await callback.answer("⚠️ This payment is reviewed manually by our team.", show_alert=True)
+        return
+    if tx_verify == "failed":
+        await callback.answer(f"❌ Not confirmed: {(tx_detail or 'payment not found')[:150]}", show_alert=True)
+        return
+    if tx_status != "pending":
+        await callback.answer(f"Status: {tx_status}", show_alert=True)
+        return
+    outcome = await review.verify_tx_attempt(settings(), callback.bot, tx_id)
+    if outcome == "verified":
+        await callback.answer("✅ Verified on-chain! Waiting for admin approval.", show_alert=True)
+    elif outcome == "failed":
+        await callback.answer("❌ Verification failed — our team will review it.", show_alert=True)
+    else:
+        await callback.answer("⏳ Still confirming on the blockchain. Try again in a minute.", show_alert=True)
 
 
 async def send_welcome(target: Message, user: User) -> None:

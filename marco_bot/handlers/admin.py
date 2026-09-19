@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -173,8 +172,8 @@ async def recheck_verification(message: Message) -> None:
             return
         tx.verify_status = "verifying"
         tx.verify_detail = None
-    asyncio.create_task(review.run_verification_task(settings(), message.bot, tx_id))
-    await message.answer(f"🔎 Re-running on-chain verification for TX {tx_id}.")
+    await review.schedule_verification(settings(), message.bot, tx_id)
+    await message.answer(f"🔎 Verification re-run started for TX {tx_id}.")
 
 
 @router.message(Command("stats"))
