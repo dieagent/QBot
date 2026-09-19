@@ -32,10 +32,11 @@ _settings: Settings | None = None
 _initialized = False
 
 DATABASE_URL_ERROR = (
-    "DATABASE_URL is missing or is still a Railway-style reference "
-    "('${{Postgres.DATABASE_URL}}'). Set a real Postgres connection URL "
-    "(postgresql://user:pass@host:port/db) in the Vercel project env vars, "
-    "then redeploy."
+    "DATABASE_URL is missing, is still a Railway-style reference "
+    "('${{Postgres.DATABASE_URL}}'), or points at SQLite. Serverless instances "
+    "have an ephemeral filesystem, so the ledger requires a real Postgres "
+    "URL (postgresql://user:pass@host:port/db) in the Vercel env vars. "
+    "Set it, then redeploy."
 )
 
 
@@ -43,8 +44,9 @@ def _usable_database_url(settings: Settings) -> bool:
     url = (settings.database_url or "").strip()
     if "${" in url:
         return False
-    prefixes = ("postgresql://", "postgres://", "postgresql+asyncpg://", "sqlite", "sqlite+aiosqlite")
-    return url.startswith(prefixes)
+    # SQLite is refused here on purpose: it lives on the ephemeral function
+    # filesystem and balances/ad history would vanish between instances.
+    return url.startswith(("postgresql://", "postgres://", "postgresql+asyncpg://"))
 
 
 async def ensure_initialized() -> Settings:

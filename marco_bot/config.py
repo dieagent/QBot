@@ -47,6 +47,8 @@ class Settings:
     # Optional webhook/serverless settings (defaults keep legacy constructors working).
     webhook_url: str | None = None
     webhook_secret: str | None = None
+    # Menu loading animations (UI_ANIMATIONS=off disables).
+    ui_animations: bool = True
 
     @property
     def webhook_mode(self) -> bool:
@@ -104,6 +106,13 @@ def _optional_int_env(name: str) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = _optional_env(name)
+    if value is None:
+        return default
+    return value.lower() not in {"0", "off", "false", "no"}
 
 
 def _required_groups_from_env() -> list[ConfiguredGroup]:
@@ -178,6 +187,7 @@ def load_settings() -> Settings:
         verify_min_confirmations=_optional_int_env("VERIFY_MIN_CONFIRMATIONS"),
         webhook_url=_optional_env("WEBHOOK_URL"),
         webhook_secret=_optional_env("WEBHOOK_SECRET"),
+        ui_animations=_bool_env("UI_ANIMATIONS", True),
         telegram_api_id=_optional_env("TELEGRAM_API_ID"),
         telegram_api_hash=_optional_env("TELEGRAM_API_HASH"),
         telegram_phone=_optional_env("TELEGRAM_PHONE"),

@@ -13,7 +13,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, select
 
-from .. import chainverify
+from .. import animation, chainverify
 from .. import constants as c
 from .. import keyboards as kb
 from .. import messages as msg
@@ -342,16 +342,14 @@ async def callbacks(callback: CallbackQuery) -> None:
     if data == "nav:menu":
         async with session_scope() as session:
             await clear_flow(session, user.user_id)
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, "Opening main menu", enabled=settings().ui_animations)
         await send_welcome(callback.message, user)
         return
     if data == "nav:back":
         async with session_scope() as session:
             bot_session = await pop_state(session, user.user_id)
             state = bot_session.state
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, "Going back", enabled=settings().ui_animations)
         await render_state(callback.message, user, state)
         return
     if data.startswith("captcha:answer:"):
@@ -395,9 +393,8 @@ async def callbacks(callback: CallbackQuery) -> None:
     elif data == "payment:check":
         await request_screenshot(callback, user)
     elif data == "wallet:open":
-        await delete_callback_message(callback)
+        await animation.animate_action(callback, "Opening wallet", enabled=settings().ui_animations)
         await open_wallet(callback.message, user)
-        await callback.answer()
     elif data == "wallet:add":
         await wallet_add(callback, user)
     elif data == "wallet:withdraw":
@@ -652,6 +649,7 @@ async def publish_ad(callback: CallbackQuery, user: User) -> None:
             await callback.answer("Ad is incomplete. Please revise it.", show_alert=True)
             return
 
+        await animation.animate_action(callback, "Publishing your ad", enabled=settings().ui_animations)
         ref_code = await unique_ref_code(session)
         ad = Ad(
             ref_code=ref_code,
@@ -672,8 +670,6 @@ async def publish_ad(callback: CallbackQuery, user: User) -> None:
         await session.flush()
 
         await post_public_ad(callback, ad, data, public_username(user))
-        await delete_callback_message(callback)
-        await callback.answer()
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.ad_published(ref_code), reply_markup=kb.persistent_menu(user))
 
 
@@ -731,8 +727,7 @@ async def show_payment_modes(callback: CallbackQuery, user: User) -> None:
         result = await session.execute(select(PaymentMode))
         modes = list(result.scalars().all())
         await transition(session, user.user_id, states.EXPRESS_PAYMENT_MODE, {}, push=True)
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, "Loading payment methods", enabled=settings().ui_animations)
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.PAYMENT_MODE_SELECT, reply_markup=kb.payment_modes(modes))
 
 
@@ -744,8 +739,7 @@ async def set_express_mode(callback: CallbackQuery, user: User, payment_mode: st
             return
         tiers = await get_rate_tiers(session, payment_mode)
         await transition(session, user.user_id, states.EXPRESS_AMOUNT_INPUT, {"payment_mode": payment_mode, "tx_type": "express_sell"}, push=True)
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, f"Loading {payment_mode} rates", enabled=settings().ui_animations)
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
 
 
@@ -782,8 +776,7 @@ async def process_express_amount(message: Message, user: User, amount: Decimal) 
 async def set_express_token(callback: CallbackQuery, user: User, token: str) -> None:
     async with session_scope() as session:
         await transition(session, user.user_id, states.EXPRESS_CHAIN_SELECT, {"token": token}, push=True)
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, f"Preparing {token} networks", enabled=settings().ui_animations)
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.express_chain_select(token), reply_markup=kb.express_chains(token, "express"))
 
 
@@ -794,8 +787,7 @@ async def set_express_chain(callback: CallbackQuery, user: User, chain: str) -> 
         token = data.get("token", "USDT")
         address = deposit_address(settings(), token, chain)
         await transition(session, user.user_id, states.EXPRESS_DEPOSIT_ADDRESS, {"chain": chain, "deposit_address": address}, push=True)
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, "Generating deposit address", enabled=settings().ui_animations)
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.deposit_instructions(token, chain, address), reply_markup=kb.check_payment(), parse_mode="HTML")
 
 
@@ -812,8 +804,7 @@ async def request_screenshot(callback: CallbackQuery, user: User) -> None:
         data = session_data(bot_session)
         supported, _ = chainverify.support_status(settings(), data.get("token"), data.get("chain"), data.get("deposit_address"))
         prompt = msg.TX_HASH_PROMPT if supported else msg.SCREENSHOT_PROMPT
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, "Connecting to blockchain", enabled=settings().ui_animations, style="spinner")
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, prompt)
 
 
@@ -855,8 +846,7 @@ async def handle_wallet_deposit_amount(message: Message, user: User, text: str) 
 async def set_wallet_token(callback: CallbackQuery, user: User, token: str) -> None:
     async with session_scope() as session:
         await transition(session, user.user_id, states.WALLET_ADD_CHAIN, {"token": token}, push=True)
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, f"Preparing {token} networks", enabled=settings().ui_animations)
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.express_chain_select(token), reply_markup=kb.express_chains(token, "wallet"))
 
 
@@ -873,8 +863,7 @@ async def set_wallet_chain(callback: CallbackQuery, user: User, chain: str) -> N
             {"chain": chain, "deposit_address": address},
             push=True,
         )
-        await delete_callback_message(callback)
-        await callback.answer()
+        await animation.animate_action(callback, "Generating deposit address", enabled=settings().ui_animations)
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.deposit_instructions(token, chain, address), reply_markup=kb.check_payment(), parse_mode="HTML")
 
 
