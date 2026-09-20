@@ -65,7 +65,7 @@ Confirm होते ही आपको मैसेज मिलेगा ✅"
 ▪️ कुल Safe Sell Volume: ${volume}
 ▪️ Referrals: {referrals}
 
-SAFE-SELL के लिए {bot_username} इस्तेमाल करें ⚡️""",
+{extras}SAFE-SELL के लिए {bot_username} इस्तेमाल करें ⚡️""",
 
     "VERIFIED_USER": """✅ पेमेंट ब्लॉकचेन पर confirm हो गई!
 

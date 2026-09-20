@@ -79,6 +79,7 @@ async def ensure_initialized() -> Settings:
     user.configure(settings)
     _get_dispatcher()
     await _ensure_webhook(settings)
+    await bootcheck.run_boot_check(settings)
     _initialized = True
     return settings
 
@@ -170,11 +171,7 @@ _last_alert_at = 0.0
 
 
 def _admin_destinations(settings: Settings) -> list[int | str]:
-    destinations: list[int | str] = []
-    if settings.admin_review_chat_id:
-        destinations.append(settings.admin_review_chat_id)
-    destinations.extend(settings.admin_ids)
-    return destinations
+    return review.admin_chat_destinations(settings)
 
 
 async def daily_summary(authorization: str | None) -> dict:

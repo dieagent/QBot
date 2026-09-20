@@ -59,7 +59,20 @@ def welcome_render(lang: str | None = None) -> str:
     return tr("WELCOME", lang, WELCOME)
 
 
-def my_stats_render(username: str, member_since: str, ads: int, sells: int, volume: Decimal, badge: str = "", referrals: int = 0, lang: str | None = None) -> str:
+def my_stats_render(
+    username: str,
+    member_since: str,
+    ads: int,
+    sells: int,
+    volume: Decimal,
+    badge: str = "",
+    referrals: int = 0,
+    extras: list[str] | None = None,
+    lang: str | None = None,
+) -> str:
+    extras_block = ""
+    if extras:
+        extras_block = "\n".join(extras) + "\n\n"
     default = f"""📊 @{username} Statistics {badge}
 
 ▪️ Member Since: {member_since}
@@ -68,7 +81,7 @@ def my_stats_render(username: str, member_since: str, ads: int, sells: int, volu
 ▪️ Total Safe Sell Volume: ${volume:.2f}
 ▪️ Referrals: {referrals}
 
-Use {BOT_USERNAME} for SAFE-SELL ⚡️"""
+{extras_block}Use {BOT_USERNAME} for SAFE-SELL ⚡️"""
     hi = HI.get("MY_STATS", "")
     text = tr("MY_STATS", lang, default)
     if lang == "hi" and hi:
@@ -76,7 +89,7 @@ Use {BOT_USERNAME} for SAFE-SELL ⚡️"""
             "{member_since}", member_since
         ).replace("{ads}", str(ads)).replace("{sells}", str(sells)).replace(
             "{volume}", f"{volume:.2f}"
-        ).replace("{referrals}", str(referrals)).replace("{bot_username}", BOT_USERNAME)
+        ).replace("{referrals}", str(referrals)).replace("{extras}", extras_block).replace("{bot_username}", BOT_USERNAME)
     return text
 
 

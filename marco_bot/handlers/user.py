@@ -27,6 +27,9 @@ from ..services import (
     add_safe_sell_stats,
     as_money,
     badge_for,
+    badge_progress_line,
+    platform_rating,
+    platform_rating_line,
     parse_referral_payload,
     referral_link,
     captcha_file,
@@ -415,11 +418,13 @@ async def callbacks(callback: CallbackQuery) -> None:
         await callback.answer()
         await handle_captcha_answer(callback.message, user, data.rsplit(":", 1)[1])
         return
-    if locked and not (data == "wallet:open" or data.startswith(("verify:check:", "tx:cancel:", "tx:list:", "lang:"))):
+    if locked and not (data == "wallet:open" or data.startswith(("verify:check:", "tx:cancel:", "tx:list:", "lang:", "rate:"))):
         await callback.answer(msg.LOCKED_ACTION, show_alert=True)
         return
 
-    if data.startswith("verify:check:"):
+    if data.startswith("rate:"):
+        await handle_rate(callback, user, data[len("rate:"):])
+    elif data.startswith("verify:check:"):
         await handle_verify_check(callback, user, data.rsplit(":", 1)[1])
     elif data.startswith("tx:list:"):
         await show_my_transactions(callback, user, data.rsplit(":", 1)[1])
@@ -1076,6 +1081,32 @@ async def delete_callback_message(callback: CallbackQuery) -> None:
         pass
 
 
+async def handle_rate(callback: CallbackQuery, user: User, payload: str) -> None:
+    parts = payload.split(":")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        await callback.answer("Invalid rating.", show_alert=True)
+        return
+    tx_id, stars = int(parts[0]), int(parts[1])
+    if stars < 1 or stars > 5:
+        await callback.answer("Invalid rating.", show_alert=True)
+        return
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        if not tx or tx.user_id != user.user_id:
+            await callback.answer("This deal doesn't belong to you.", show_alert=True)
+            return
+        if tx.status != "approved" or not tx.payout_reference:
+            await callback.answer("Rating opens once your payout receipt arrives.", show_alert=True)
+            return
+        tx.rating = stars
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+    await callback.answer(f"Thanks for the {'⭐' * stars} — we got your rating! 🙏", show_alert=True)
+
+
 async def show_my_stats(message: Message, user: User) -> None:
     async with session_scope() as session:
         user = await session.get(User, user.user_id)
@@ -1087,6 +1118,13 @@ async def show_my_stats(message: Message, user: User) -> None:
         member_since = user.first_seen_at.strftime("%d %b, %Y")
         result = await session.execute(select(func.count(User.user_id)).where(User.referred_by == user.user_id))
         referral_count = result.scalar() or 0
+        extras = [badge_progress_line(user.safe_sell_volume)]
+        if user.post_ad_cooldown_until and user.post_ad_cooldown_until > utcnow():
+            extras.append(f"⏳ Next ad available in: {format_remaining(user.post_ad_cooldown_until)}")
+        avg, rated = await platform_rating(session)
+        rating_line = platform_rating_line(avg, rated)
+        if rating_line:
+            extras.append(rating_line)
         await send_tracked_menu_message(
             session,
             message.bot,
@@ -1100,6 +1138,7 @@ async def show_my_stats(message: Message, user: User) -> None:
                 user.safe_sell_volume,
                 badge=badge_for(user.safe_sell_volume) or "",
                 referrals=referral_count,
+                extras=extras,
                 lang=lang_of(user),
             ),
             reply_markup=kb.my_stats_actions(),

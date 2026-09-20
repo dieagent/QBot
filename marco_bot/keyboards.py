@@ -248,6 +248,15 @@ def tx_list_nav(offset: int, total: int, page_size: int) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=[row] if row else [])
 
 
+def rating_buttons(tx_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="⭐" * stars, callback_data=f"rate:{tx_id}:{stars}")
+            for stars in range(1, 6)
+        ]]
+    )
+
+
 REJECT_REASONS = {
     "wrong_network": "Wrong network used",
     "wrong_amount": "Wrong amount sent",

@@ -104,6 +104,20 @@ Serverless limitations are handled by design:
   admin review chat by Vercel Cron (`/api/cron`, `CRON_SECRET`-protected).
 - Unhandled webhook errors alert the admin chat in Telegram, throttled to at
   most one alert per 5 minutes, so retry storms cannot spam it.
+- Every cold start runs a **boot self-check** (token valid, deposit addresses
+  configured for every UI-offered token/chain, admin chat set, webhook/cron
+  secrets present). A Telegram warning goes to the admins on problems —
+  quiet when healthy, throttled to one alert per 6 hours, and it can never
+  break the boot itself.
+- **Aging-queue alerts:** any deal pending ≥45 minutes escalates to the
+  admins ("N deals waiting"), re-pinging at most every 30 minutes while the
+  queue stays stuck. Rides the existing sweep cadence (both serverless and
+  polling runtimes).
+
+## CI
+
+`.github/workflows/ci.yml` runs the full pytest suite on every push and pull
+request, so broken changes are flagged before they can deploy.
 
 ## Deposit Address Format
 
@@ -160,6 +174,11 @@ The bot runtime now uses the updated premium emoji IDs from the latest deploymen
   their first approved SAFE SELL.
 - **Trust badges** — 🥉 (≥$250) / 🥈 (≥$1000) / 🥇 (≥$5000) completed SAFE
   SELL volume badges appear in My Stats and next to the username in ads.
+- **My Stats extras** — live ad-cooldown countdown, progress to the next
+  badge tier, and the platform rating (shown once ≥3 users have rated).
+- **Post-deal rating** — the payout receipt carries ⭐ buttons; the user
+  rates the deal 1–5, and the running average ("⭐ 4.9/5 by 12 users")
+  shows in My Stats.
 - **Hindi toggle** — `/lang` or the 🇮🇳 button on the stats screen switches
   the core screens (welcome, SAFE SELL, deposit, verification, wallet) to
   Hindi; anything untranslated falls back to English.

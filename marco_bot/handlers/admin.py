@@ -211,6 +211,7 @@ async def payout_receipt(message: Message) -> None:
                     user.user_id,
                     msg.payout_receipt_render(tx, lang_of(user)),
                     parse_mode=ParseMode.HTML,
+                    reply_markup=kb.rating_buttons(tx.tx_id),
                 )
                 delivered = True
             except (TelegramBadRequest, TelegramForbiddenError):

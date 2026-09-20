@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
+from . import bootcheck
 from .config import load_settings
 from .db import configure_database, init_db
 from .handlers import admin, user
@@ -33,6 +34,7 @@ async def main() -> None:
     dispatcher.include_router(admin.router)
     dispatcher.include_router(user.router)
 
+    await bootcheck.run_boot_check(settings)
     await bot.delete_webhook(drop_pending_updates=True)
     await dispatcher.start_polling(bot)
 
