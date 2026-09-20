@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import io
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -7,8 +10,8 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.enums import MessageEntityType
-from aiogram.types import CallbackQuery, Message, MessageEntity
-from sqlalchemy import select
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, MessageEntity
+from sqlalchemy import func, select
 
 from .. import keyboards as kb
 from .. import messages as msg
@@ -16,7 +19,10 @@ from .. import review
 from ..config import Settings
 from ..db import session_scope
 from ..models import GlobalStats, PaymentMode, RateTier, Transaction, User, utcnow
-from ..services import add_safe_sell_stats, as_money, parse_decimal, reset_today_if_needed
+from ..services import add_safe_sell_stats, as_money, credit_amount_for, parse_decimal, reset_today_if_needed
+from ..translations import lang_of
+
+EXPORT_ROW_CAP = 5000
 
 router = Router()
 _settings: Settings | None = None
@@ -70,6 +76,8 @@ async def admin_help(message: Message) -> None:
 /pending - show pending review queue
 /stats - show global stats
 /recheck TX_ID - rerun on-chain verification
+/receipt TX_ID PAYOUT_REF - attach payout reference (UPI UTR etc.) & send user a receipt
+/export - download transactions CSV (latest 5000)
 /emojiids - extract premium custom emoji IDs
 
 ⚙️ Payment & Rates:
@@ -174,6 +182,76 @@ async def recheck_verification(message: Message) -> None:
         tx.verify_detail = None
     await review.schedule_verification(settings(), message.bot, tx_id)
     await message.answer(f"🔎 Verification re-run started for TX {tx_id}.")
+
+
+@router.message(Command("receipt"))
+async def payout_receipt(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].strip():
+        await message.answer("Usage: /receipt TX_ID PAYOUT_REFERENCE (e.g. /receipt 42 831204912345)")
+        return
+    tx_id = int(parts[1])
+    reference = parts[2].strip()
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        if not tx:
+            await message.answer(f"TX {tx_id} not found.")
+            return
+        if tx.status != "approved":
+            await message.answer(f"TX {tx_id} is {tx.status} — approve it first, then send the receipt.")
+            return
+        tx.payout_reference = reference
+        user = await session.get(User, tx.user_id)
+        delivered = False
+        if user:
+            try:
+                await message.bot.send_message(
+                    user.user_id,
+                    msg.payout_receipt_render(tx, lang_of(user)),
+                    parse_mode=ParseMode.HTML,
+                )
+                delivered = True
+            except (TelegramBadRequest, TelegramForbiddenError):
+                delivered = False
+    if delivered:
+        await message.answer(f"✅ Receipt for TX {tx_id} delivered (ref: {reference}).")
+    else:
+        await message.answer(f"⚠️ Reference saved on TX {tx_id}, but the user could not be DM'd (bot blocked?).")
+
+
+@router.message(Command("export"))
+async def export_transactions(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    async with session_scope() as session:
+        result = await session.execute(
+            select(Transaction).order_by(Transaction.created_at.desc()).limit(EXPORT_ROW_CAP)
+        )
+        rows = list(result.scalars().all())
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "tx_id", "user_id", "type", "status", "verify_status", "amount_usd", "amount_inr",
+        "coin", "chain", "payment_mode", "deposit_address", "chain_tx_hash",
+        "verified_amount", "payout_reference", "admin_id", "created_at", "resolved_at",
+    ])
+    for tx in rows:
+        writer.writerow([
+            tx.tx_id, tx.user_id, tx.type, tx.status, tx.verify_status or "",
+            str(tx.amount_usd), str(tx.amount_inr), tx.coin or "", tx.chain or "",
+            tx.payment_mode or "", tx.deposit_address or "", tx.chain_tx_hash or "",
+            "" if tx.verified_amount is None else str(tx.verified_amount),
+            tx.payout_reference or "", tx.admin_id or "",
+            tx.created_at.isoformat(), tx.resolved_at.isoformat() if tx.resolved_at else "",
+        ])
+    payload = buffer.getvalue().encode("utf-8-sig")  # BOM so Excel renders UTF-8 correctly
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    await message.answer_document(
+        BufferedInputFile(payload, filename=f"transactions_{stamp}.csv"),
+        caption=f"📤 Latest {len(rows)} transactions (cap {EXPORT_ROW_CAP}).",
+    )
 
 
 @router.message(Command("stats"))
@@ -399,17 +477,40 @@ async def admin_callback(callback: CallbackQuery) -> None:
     if not is_admin(callback.from_user.id):
         await callback.answer("Not authorized.", show_alert=True)
         return
-    try:
-        _, action, tx_id_raw = callback.data.split(":", 2)
-        tx_id = int(tx_id_raw)
-    except ValueError:
+    parts = callback.data.split(":")
+    if len(parts) < 3 or not parts[2].isdigit():
         await callback.answer("Invalid admin action.", show_alert=True)
         return
+    action = parts[1]
+    tx_id = int(parts[2])
 
     if action == "approve":
         await approve_transaction(callback, tx_id)
     elif action == "reject":
-        await reject_transaction(callback, tx_id)
+        # Don't reject yet — ask for a one-tap reason first.
+        async with session_scope() as session:
+            tx = await session.get(Transaction, tx_id)
+            if not tx or tx.status != "pending":
+                await callback.answer("Transaction is not pending.", show_alert=True)
+                return
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb.admin_reject_reasons(tx_id))
+            await callback.answer("Pick a rejection reason 👇")
+        except TelegramBadRequest:
+            await callback.answer("Could not swap the keyboard — react from a fresh /pending card.", show_alert=True)
+    elif action == "reject_reason":
+        code = parts[3] if len(parts) > 3 else "other"
+        reason = kb.REJECT_REASONS.get(code)
+        if not reason:
+            await callback.answer("Unknown rejection reason.", show_alert=True)
+            return
+        await reject_transaction(callback, tx_id, reason=reason)
+    elif action == "back":
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb.admin_review(tx_id))
+            await callback.answer("Back.")
+        except TelegramBadRequest:
+            await callback.answer()
     else:
         await callback.answer("Unknown admin action.", show_alert=True)
 
@@ -448,14 +549,48 @@ async def approve_transaction(callback: CallbackQuery, tx_id: int) -> None:
                 await callback.answer("No transaction hash submitted — on-chain verification is required before approval.", show_alert=True)
                 return
             if tx.type == "wallet_deposit":
-                user.wallet_balance = as_money(user.wallet_balance + tx.amount_usd)
+                # Exact-credit: stablecoin deposits credit the full on-chain
+                # verified amount, so overpay is credited rather than lost.
+                user.wallet_balance = as_money(user.wallet_balance + credit_amount_for(tx))
             await add_safe_sell_stats(session, user, tx.amount_usd, settings().timezone)
 
         tx.status = "approved"
         tx.admin_id = callback.from_user.id
         tx.resolved_at = utcnow()
         user.is_locked = False
+
+        referral_bonus: tuple[User, Decimal] | None = None
+        if (
+            tx.type == "express_sell"
+            and user.referred_by
+            and settings().referral_bonus_usd > 0
+        ):
+            prior = await session.execute(
+                select(func.count(Transaction.tx_id)).where(
+                    Transaction.user_id == user.user_id,
+                    Transaction.type == "express_sell",
+                    Transaction.status == "approved",
+                    Transaction.tx_id != tx.tx_id,
+                )
+            )
+            if prior.scalar_one() == 0:
+                referrer = await session.get(User, user.referred_by)
+                if referrer:
+                    bonus = as_money(settings().referral_bonus_usd)
+                    referrer.wallet_balance = as_money(referrer.wallet_balance + bonus)
+                    referral_bonus = (referrer, bonus)
+
         await notify_user_approved(callback, user, tx)
+        if referral_bonus is not None:
+            referrer, bonus = referral_bonus
+            try:
+                await callback.bot.send_message(
+                    referrer.user_id,
+                    f"🎁 Referral Bonus!\n\nA user you invited just completed their first SAFE SELL. ${bonus:.2f} has been added to your wallet balance.",
+                    reply_markup=kb.persistent_menu(referrer),
+                )
+            except (TelegramBadRequest, TelegramForbiddenError):
+                pass
         await callback.answer("Approved.")
         if callback.message:
             try:
@@ -465,7 +600,7 @@ async def approve_transaction(callback: CallbackQuery, tx_id: int) -> None:
                 pass
 
 
-async def reject_transaction(callback: CallbackQuery, tx_id: int) -> None:
+async def reject_transaction(callback: CallbackQuery, tx_id: int, reason: str | None = None) -> None:
     async with session_scope() as session:
         tx = await session.get(Transaction, tx_id)
         if not tx or tx.status != "pending":
@@ -479,12 +614,13 @@ async def reject_transaction(callback: CallbackQuery, tx_id: int) -> None:
         tx.admin_id = callback.from_user.id
         tx.resolved_at = utcnow()
         user.is_locked = False
-        await notify_user_rejected(callback, user, tx)
+        await notify_user_rejected(callback, user, tx, reason=reason)
         await callback.answer("Rejected.")
         if callback.message:
+            suffix = f"\nReason: {reason}" if reason else ""
             try:
                 await callback.message.edit_reply_markup(reply_markup=None)
-                await callback.message.answer(f"❌ TX {tx.tx_id} rejected by {callback.from_user.id}.")
+                await callback.message.answer(f"❌ TX {tx.tx_id} rejected by @{callback.from_user.username or callback.from_user.id}.{suffix}")
             except TelegramBadRequest:
                 pass
 
@@ -493,7 +629,11 @@ async def notify_user_approved(callback: CallbackQuery, user: User, tx: Transact
     if tx.type == "withdrawal":
         text = "✅ Withdrawal Approved!\n\nYour payout request has been marked completed."
     elif tx.type == "wallet_deposit":
-        text = f"✅ Payment Verified!\n\n${tx.amount_usd:.2f} has been added to your wallet balance."
+        credited = credit_amount_for(tx)
+        extra = ""
+        if credited > tx.amount_usd:
+            extra = f"\n(You sent ${credited:.2f} on-chain — the full extra amount was credited 🙌)"
+        text = f"✅ Payment Verified!\n\n${credited:.2f} has been added to your wallet balance.{extra}"
     else:
         text = "✅ Payment Verified!\n\nYour transaction has been approved. SAFE & GUARANTEED INR payout is marked completed."
     try:
@@ -502,10 +642,12 @@ async def notify_user_approved(callback: CallbackQuery, user: User, tx: Transact
         pass
 
 
-async def notify_user_rejected(callback: CallbackQuery, user: User, tx: Transaction) -> None:
+async def notify_user_rejected(callback: CallbackQuery, user: User, tx: Transaction, reason: str | None = None) -> None:
     text = "❌ Payment Rejected!\n\nPlease retry or contact support."
     if tx.type == "withdrawal":
         text = "❌ Withdrawal Rejected!\n\nPlease retry or contact support."
+    if reason:
+        text = text.replace("Please retry or contact support.", f"Reason: {reason}\nPlease fix it and retry, or contact support.")
     try:
         await callback.bot.send_message(user.user_id, text, reply_markup=kb.persistent_menu(user))
     except (TelegramBadRequest, TelegramForbiddenError):

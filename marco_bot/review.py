@@ -28,9 +28,11 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from . import keyboards as kb
+from . import messages as msg
 from .config import Settings
 from .db import session_scope
 from .models import Transaction, User
+from .translations import lang_of
 
 VERIFIABLE_TYPES = {"express_sell", "wallet_deposit"}
 
@@ -174,17 +176,13 @@ async def verify_tx_attempt(settings: Settings, bot: Bot, tx_id: int) -> str:
         await _notify_user(
             bot,
             user.user_id,
-            "✅ Payment confirmed on-chain!\n\n"
-            f"{detail}\n\n"
-            "Your transaction is waiting for admin approval. "
-            "This usually takes a few minutes ⚡",
+            msg.verified_user_text(detail, lang_of(user)),
         )
     else:
         await _notify_user(
             bot,
             user.user_id,
-            "⚠️ We could not confirm your payment on-chain.\n\n"
-            "Our team will review it shortly. If this takes long, please contact support.",
+            msg.failed_user_text(lang_of(user)),
         )
     await notify_admin_review(bot, settings, user, tx)
     return final_status
@@ -216,8 +214,7 @@ async def run_verification_task(settings: Settings, bot: Bot, tx_id: int) -> Non
             await _notify_user(
                 bot,
                 user.user_id,
-                "⚠️ We could not confirm your payment on-chain.\n\n"
-                "Our team will review it shortly. If this takes long, please contact support.",
+                msg.failed_user_text(lang_of(user)),
             )
             await notify_admin_review(bot, settings, user, tx)
     except Exception:

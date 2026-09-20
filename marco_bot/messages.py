@@ -11,6 +11,8 @@ from .constants import (
     IN_AD_ESCROW_USERNAME,
     UPDATES_USERNAME,
 )
+from .chainverify import explorer_url
+from .translations import HI, tr
 
 INFO_CARD = f"""What can this bot do? ⚡
 
@@ -53,19 +55,94 @@ def premium_emoji(emoji_id: str, fallback: str) -> str:
     return fallback
 
 
-def welcome_render() -> str:
-    return WELCOME
+def welcome_render(lang: str | None = None) -> str:
+    return tr("WELCOME", lang, WELCOME)
 
 
-def my_stats_render(username: str, member_since: str, ads: int, sells: int, volume: Decimal) -> str:
-    return f"""📊 @{username} Statistics
+def my_stats_render(username: str, member_since: str, ads: int, sells: int, volume: Decimal, badge: str = "", referrals: int = 0, lang: str | None = None) -> str:
+    default = f"""📊 @{username} Statistics {badge}
 
 ▪️ Member Since: {member_since}
 ▪️ P2P Ads Posted: {ads}
 ▪️ Safe Sells Completed: {sells}
 ▪️ Total Safe Sell Volume: ${volume:.2f}
+▪️ Referrals: {referrals}
 
 Use {BOT_USERNAME} for SAFE-SELL ⚡️"""
+    hi = HI.get("MY_STATS", "")
+    text = tr("MY_STATS", lang, default)
+    if lang == "hi" and hi:
+        text = hi.replace("{username}", str(username)).replace("{badge}", badge).replace(
+            "{member_since}", member_since
+        ).replace("{ads}", str(ads)).replace("{sells}", str(sells)).replace(
+            "{volume}", f"{volume:.2f}"
+        ).replace("{referrals}", str(referrals)).replace("{bot_username}", BOT_USERNAME)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Flow progress tracker (SAFE SELL / wallet top-up)
+# ---------------------------------------------------------------------------
+
+SELL_STEPS = ["💳 Mode", "💰 Amount", "🪙 Token", "🌐 Network", "💸 Pay", "🔎 Verify"]
+WALLET_STEPS = ["💰 Amount", "🪙 Token", "🌐 Network", "💸 Pay", "🔎 Verify"]
+
+
+def steps_header(current: int, wallet_flow: bool = False, lang: str | None = None) -> str:
+    steps = WALLET_STEPS if wallet_flow else SELL_STEPS
+    parts = [f"{label} ✅" if i < current else (f"▶ {label}" if i == current else label) for i, label in enumerate(steps)]
+    title = "Step" if lang != "hi" else "Step"
+    return f"┌ {title} {current + 1}/{len(steps)}\n└ " + " → ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# My transactions
+# ---------------------------------------------------------------------------
+
+TX_STATUS_ICON = {
+    "pending": "⏳",
+    "approved": "✅",
+    "rejected": "❌",
+    "cancelled": "🚫",
+}
+VERIFY_ICON = {"verified": "✅ on-chain", "verifying": "⚙️ verifying", "failed": "❌ on-chain", "manual": "👁 manual"}
+
+
+def my_tx_render(rows: list, offset: int, total: int, lang: str | None = None) -> str:
+    title = "📄 Your Transactions" if lang != "hi" else "📄 आपके Transactions"
+    if not rows:
+        empty = "No transactions yet. Start with SAFE SELL ⚡" if lang != "hi" else "अभी कोई transaction नहीं — SAFE SELL से शुरू करें ⚡"
+        return f"{title}\n\n{empty}"
+    lines = [f"{title} ({offset + 1}-{offset + len(rows)} of {total})", ""]
+    for tx in rows:
+        icon = TX_STATUS_ICON.get(tx.status, "⏳")
+        verify = VERIFY_ICON.get(tx.verify_status or "", "")
+        coin_part = f" {tx.coin}/{tx.chain}" if tx.coin else ""
+        line = f"{icon} TX {tx.tx_id} · {tx.type.replace('_', ' ')} · ${tx.amount_usd:.2f}{coin_part}"
+        if verify and tx.status in {"pending", "approved"}:
+            line += f" · {verify}"
+        if tx.chain_tx_hash and tx.chain:
+            url = explorer_url(tx.chain, tx.chain_tx_hash)
+            if url:
+                line += f"\n    <a href=\"{url}\">🔗 hash</a>"
+        if tx.payout_reference and tx.status == "approved":
+            line += f"\n    💸 payout ref: <code>{tx.payout_reference}</code>"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def payout_receipt_render(tx, lang: str | None = None) -> str:
+    default = f"""💸 Payout Sent! ✅
+
+TX: {tx.tx_id}
+Amount: ${tx.amount_usd:.2f}
+Payout Reference: <code>{tx.payout_reference}</code>
+
+Check this reference in your bank/UPI app. Any issue, contact support 🙏"""
+    text = tr("RECEIPT_USER", lang, default)
+    if lang == "hi":
+        text = text.replace("{tx_id}", str(tx.tx_id)).replace("{amount}", f"{tx.amount_usd:.2f}").replace("{reference}", str(tx.payout_reference))
+    return text
 
 
 def global_stats_render(total: Decimal, today: Decimal, deals: int) -> str:
@@ -113,13 +190,14 @@ AMOUNT_INPUT = "▽ Enter amount / quantity ⚡\n(e.g 10-100-1000)"
 PAYMENT_METHOD = "💼 Pick a payment method:"
 
 
-def ad_text(data: dict, username: str, preview: bool = True) -> str:
+def ad_text(data: dict, username: str, preview: bool = True, badge: str = "") -> str:
     side = data.get("side", "sell")
     if side == "sell":
         side_line = "❗ #Selling"
     else:
         side_line = "🛒 #Buying"
     header = "🔎 ADVERTISEMENT PREVIEW\n\n" if preview else ""
+    badge_part = f" {badge}" if badge else ""
     return f"""{header}{side_line}
 
 💎 Crypto: {data.get("coin")}
@@ -129,7 +207,7 @@ def ad_text(data: dict, username: str, preview: bool = True) -> str:
 📈 Rate: {data.get("rate")}
 💳 Payment Method: {data.get("payment_method")}
 
-👤 DM: @{username}
+👤 DM: @{username}{badge_part}
 ⚖️ Escrow: {IN_AD_ESCROW_USERNAME}"""
 
 
@@ -188,8 +266,8 @@ def express_chain_select(token: str) -> str:
     return f"🔗 Select Chain for 🤑 {token}:"
 
 
-def deposit_instructions(token: str, chain: str, address: str) -> str:
-    return f"""🤑 Token: {escape(token)}
+def deposit_instructions(token: str, chain: str, address: str, lang: str | None = None) -> str:
+    default = f"""🤑 Token: {escape(token)}
 🔗 Network: {escape(chain)}
 
 Pay on the address below 👇:
@@ -198,6 +276,54 @@ Pay on the address below 👇:
 ⚠️ Note: Send exact amount or more. Any extra will be added to your wallet balance.
 
 After payment, ➡️ click 'CHECK PAYMENT' below to send proof 👁"""
+    text = tr("DEPOSIT_INSTRUCTIONS", lang, default)
+    if lang == "hi":
+        text = text.replace("{token}", escape(token)).replace("{chain}", escape(chain)).replace("{address}", escape(address))
+    return text
+
+
+def safe_sell_landing(lang: str | None = None) -> str:
+    return tr("SAFE_SELL_LANDING", lang, SAFE_SELL_LANDING)
+
+
+def tx_hash_prompt(lang: str | None = None) -> str:
+    return tr("TX_HASH_PROMPT", lang, TX_HASH_PROMPT)
+
+
+def verifying_payment(lang: str | None = None) -> str:
+    return tr("VERIFYING_PAYMENT", lang, VERIFYING_PAYMENT)
+
+
+def verified_user_text(detail: str, lang: str | None = None) -> str:
+    default = (
+        "✅ Payment confirmed on-chain!\n\n"
+        f"{detail}\n\n"
+        "Your transaction is waiting for admin approval. "
+        "This usually takes a few minutes ⚡"
+    )
+    text = tr("VERIFIED_USER", lang, default)
+    if lang == "hi":
+        text = text.replace("{detail}", detail)
+    return text
+
+
+def failed_user_text(lang: str | None = None) -> str:
+    default = (
+        "⚠️ We could not confirm your payment on-chain.\n\n"
+        "Our team will review it shortly. If this takes long, please contact support."
+    )
+    return tr("FAILED_USER", lang, default)
+
+
+def cancelled_user_text(tx_id: int, lang: str | None = None) -> str:
+    default = (
+        f"🚫 Your request (TX {tx_id}) has been cancelled.\n\n"
+        "Account unlocked — you can start a new request anytime ✅"
+    )
+    text = tr("CANCELLED_USER", lang, default)
+    if lang == "hi":
+        text = text.replace("{tx_id}", str(tx_id))
+    return text
 
 
 SCREENSHOT_PROMPT = "Please send a screenshot of your payment for verification 📸."
@@ -236,12 +362,16 @@ LOCKED_STATS = """⚠ Verification Pending 🔒.
 Account is currently locked."""
 
 
-def wallet(balance: Decimal) -> str:
-    return f"""🧾 Your Wallet Balance
+def wallet(balance: Decimal, lang: str | None = None) -> str:
+    default = f"""🧾 Your Wallet Balance
 
 💰 Available: ${balance:.2f} USD
 
 You can deposit funds to use later or withdraw your funds at any time"""
+    text = tr("WALLET_CARD", lang, default)
+    if lang == "hi":
+        text = text.replace("{balance}", f"{balance:.2f}")
+    return text
 
 
 def my_stats(username: str, member_since: str, ads: int, sells: int, volume: Decimal) -> str:

@@ -5,6 +5,16 @@
     "api/webhook.py": {
       "maxDuration": 60,
       "memory": 2048
+    },
+    "api/cron.py": {
+      "maxDuration": 60,
+      "memory": 1024
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "30 3 * * *"
+    }
+  ]
 }

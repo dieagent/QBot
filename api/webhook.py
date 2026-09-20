@@ -58,6 +58,12 @@ class handler(BaseHTTPRequestHandler):
             ok = _run(serverless.handle_update(update_data, secret))
         except Exception as exc:
             _log_error(exc)
+            # Alert admins in Telegram too — throttled inside serverless so a
+            # retry storm cannot spam the review chat.
+            try:
+                _run(serverless.alert_exception(exc))
+            except Exception:
+                pass
             # 500 makes Telegram retry the delivery (correct while cold-start
             # races settle); config errors will keep failing visibly in logs.
             self._respond(500, {"ok": False, "error": str(exc)})

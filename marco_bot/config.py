@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,11 @@ class Settings:
     webhook_secret: str | None = None
     # Menu loading animations (UI_ANIMATIONS=off disables).
     ui_animations: bool = True
+    # USD credited to a referrer when a referred user completes their first
+    # approved SAFE SELL (0 = referral tracking only).
+    referral_bonus_usd: Decimal = Decimal("0")
+    # Vercel cron endpoints bear this secret in their Authorization header.
+    cron_secret: str | None = None
 
     @property
     def webhook_mode(self) -> bool:
@@ -188,6 +194,8 @@ def load_settings() -> Settings:
         webhook_url=_optional_env("WEBHOOK_URL"),
         webhook_secret=_optional_env("WEBHOOK_SECRET"),
         ui_animations=_bool_env("UI_ANIMATIONS", True),
+        referral_bonus_usd=Decimal(_optional_env("REFERRAL_BONUS_USD") or "0"),
+        cron_secret=_optional_env("CRON_SECRET"),
         telegram_api_id=_optional_env("TELEGRAM_API_ID"),
         telegram_api_hash=_optional_env("TELEGRAM_API_HASH"),
         telegram_phone=_optional_env("TELEGRAM_PHONE"),

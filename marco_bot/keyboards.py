@@ -225,7 +225,44 @@ def verify_check(tx_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 CHECK STATUS", callback_data=f"verify:check:{tx_id}")],
+            [InlineKeyboardButton(text="🚫 CANCEL REQUEST", callback_data=f"tx:cancel:{tx_id}")],
         ]
+    )
+
+
+def my_stats_actions() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 My Transactions", callback_data="tx:list:0")],
+            [InlineKeyboardButton(text="🇬🇧 English", callback_data="lang:en"), InlineKeyboardButton(text="🇮🇳 हिंदी", callback_data="lang:hi")],
+        ]
+    )
+
+
+def tx_list_nav(offset: int, total: int, page_size: int) -> InlineKeyboardMarkup:
+    row: list[InlineKeyboardButton] = []
+    if offset > 0:
+        row.append(InlineKeyboardButton(text="⬅️ Newer", callback_data=f"tx:list:{max(0, offset - page_size)}"))
+    if offset + page_size < total:
+        row.append(InlineKeyboardButton(text="Older ➡️", callback_data=f"tx:list:{offset + page_size}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row] if row else [])
+
+
+REJECT_REASONS = {
+    "wrong_network": "Wrong network used",
+    "wrong_amount": "Wrong amount sent",
+    "fake_hash": "Hash not found on-chain",
+    "other": "Other (see support)",
+}
+
+
+def admin_reject_reasons(tx_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"❌ {reason}", callback_data=f"admin:reject_reason:{tx_id}:{code}")]
+            for code, reason in REJECT_REASONS.items()
+        ]
+        + [[InlineKeyboardButton(text="⬅️ Back to Approve/Reject", callback_data=f"admin:back:{tx_id}")]]
     )
 
 

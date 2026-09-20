@@ -29,6 +29,8 @@ class User(Base):
     safe_sells_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     safe_sell_volume: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     post_ad_cooldown_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    referred_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    lang: Mapped[str | None] = mapped_column(String(5), nullable=True)  # None/'en' = English, 'hi' = Hindi
 
 
 class Ad(Base):
@@ -69,6 +71,7 @@ class Transaction(Base):
     verify_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     verified_amount: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
     verify_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payout_reference: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. UPI UTR the admin paid with
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

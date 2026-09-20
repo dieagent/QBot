@@ -9,7 +9,7 @@ from decimal import Decimal
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, select
 
@@ -19,12 +19,16 @@ from .. import keyboards as kb
 from .. import messages as msg
 from .. import review
 from .. import states
+from ..translations import lang_of
 from ..config import Settings
 from ..db import session_scope
 from ..models import Ad, CaptchaAttempt, GlobalStats, PaymentMode, Transaction, User, utcnow
 from ..services import (
     add_safe_sell_stats,
     as_money,
+    badge_for,
+    parse_referral_payload,
+    referral_link,
     captcha_file,
     clear_flow,
     delete_active_menu_message,
@@ -72,6 +76,7 @@ def settings() -> Settings:
 
 
 async def send_start_welcome(message: Message, user: User | None = None) -> None:
+    lang = lang_of(user) if user else "en"
     async with session_scope() as session:
         try:
             await send_tracked_menu_photo(
@@ -80,7 +85,7 @@ async def send_start_welcome(message: Message, user: User | None = None) -> None
                 user.user_id if user else message.from_user.id,
                 message.chat.id,
                 welcome_banner_file(),
-                msg.welcome_render(),
+                msg.welcome_render(lang),
                 reply_markup=kb.persistent_menu(user),
             )
         except Exception:
@@ -89,18 +94,25 @@ async def send_start_welcome(message: Message, user: User | None = None) -> None
                 message.bot,
                 user.user_id if user else message.from_user.id,
                 message.chat.id,
-                msg.welcome_render(),
+                msg.welcome_render(lang),
                 reply_markup=kb.persistent_menu(user),
             )
 
 
 @router.message(CommandStart())
-async def command_start(message: Message) -> None:
+async def command_start(message: Message, command: CommandObject | None = None) -> None:
     if not message.from_user:
         return
     try:
         async with session_scope() as session:
-            user, _ = await get_or_create_user(session, message.from_user)
+            user, created = await get_or_create_user(session, message.from_user)
+            # Referral links: /start ref_<telegram_id> (only counts brand-new users)
+            if created:
+                payload = command.args if command and command.args else (message.text or "")
+                referrer_id = parse_referral_payload(f"/start {payload}", user.user_id)
+                if referrer_id:
+                    user.referred_by = referrer_id
+                    logging.info("User %s joined via referral from %s", user.user_id, referrer_id)
             await clear_flow(session, user.user_id)
         await send_start_welcome(message, user)
     except Exception:
@@ -141,6 +153,53 @@ async def command_p2pstats(message: Message) -> None:
     async with session_scope() as session:
         user, _ = await get_or_create_user(session, message.from_user)
     await show_my_stats(message, user)
+
+
+@router.message(Command("lang"))
+async def command_lang(message: Message) -> None:
+    if not message.from_user:
+        return
+    parts = (message.text or "").split()
+    async with session_scope() as session:
+        user, _ = await get_or_create_user(session, message.from_user)
+        if len(parts) == 2 and parts[1].lower() in {"en", "hi"}:
+            user.lang = parts[1].lower()
+            reply = "🇬🇧 Language set to English ✅" if user.lang == "en" else "🇮🇳 भाषा अब हिंदी में ✅"
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, reply, reply_markup=kb.persistent_menu(user))
+            return
+        kb_markup = kb.my_stats_actions()
+        await message.answer("🌐 Choose your language / अपनी भाषा चुनें:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb_markup.inline_keyboard[1]]))
+
+
+@router.message(Command("refer"))
+async def command_refer(message: Message) -> None:
+    if not message.from_user:
+        return
+    async with session_scope() as session:
+        user, _ = await get_or_create_user(session, message.from_user)
+        result = await session.execute(select(func.count(User.user_id)).where(User.referred_by == user.user_id))
+        total = result.scalar() or 0
+        link = referral_link(c.BOT_USERNAME, user.user_id)
+        bonus = settings().referral_bonus_usd
+        reward_line = (
+            f"\n🎁 Reward: ${bonus:.2f} wallet credit when a friend completes their first SAFE SELL."
+            if bonus > 0
+            else ""
+        )
+        await send_tracked_menu_message(
+            session,
+            message.bot,
+            user.user_id,
+            message.chat.id,
+            f"""📣 Refer & Earn
+
+Share your personal link 👇
+<code>{link}</code>
+
+Friends who join from it are linked to you forever.
+Referrals so far: {total}{reward_line}""",
+            parse_mode="HTML",
+        )
 
 
 @router.message(Command("cancel"))
@@ -356,12 +415,18 @@ async def callbacks(callback: CallbackQuery) -> None:
         await callback.answer()
         await handle_captcha_answer(callback.message, user, data.rsplit(":", 1)[1])
         return
-    if locked and not (data == "wallet:open" or data.startswith("verify:check:")):
+    if locked and not (data == "wallet:open" or data.startswith(("verify:check:", "tx:cancel:", "tx:list:", "lang:"))):
         await callback.answer(msg.LOCKED_ACTION, show_alert=True)
         return
 
     if data.startswith("verify:check:"):
         await handle_verify_check(callback, user, data.rsplit(":", 1)[1])
+    elif data.startswith("tx:list:"):
+        await show_my_transactions(callback, user, data.rsplit(":", 1)[1])
+    elif data.startswith("tx:cancel:"):
+        await cancel_my_transaction(callback, user, data.rsplit(":", 1)[1])
+    elif data.startswith("lang:"):
+        await switch_language(callback, user, data.rsplit(":", 1)[1])
     elif data.startswith("ad:side:"):
         await set_ad_side(callback, user, data.rsplit(":", 1)[1])
     elif data.startswith("ad:coin:"):
@@ -417,6 +482,90 @@ def is_global_stats(text: str) -> bool:
 
 def is_locked_entry(text: str) -> bool:
     return text in {c.POST_AD_BUTTON, c.SAFE_SELL_BUTTON, c.WALLET_BUTTON, c.MY_STATS_BUTTON} or text.startswith("POST AD ⏳")
+
+
+TX_PAGE_SIZE = 6
+
+
+async def show_my_transactions(callback: CallbackQuery, user: User, offset_raw: str) -> None:
+    try:
+        offset = max(0, int(offset_raw))
+    except ValueError:
+        offset = 0
+    async with session_scope() as session:
+        total = (await session.execute(select(func.count(Transaction.tx_id)).where(Transaction.user_id == user.user_id))).scalar() or 0
+        rows = list(
+            (
+                await session.execute(
+                    select(Transaction)
+                    .where(Transaction.user_id == user.user_id)
+                    .order_by(Transaction.tx_id.desc())
+                    .offset(offset)
+                    .limit(TX_PAGE_SIZE)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    text = msg.my_tx_render(rows, offset, total, lang=lang_of(user))
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=kb.tx_list_nav(offset, total, TX_PAGE_SIZE),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=kb.tx_list_nav(offset, total, TX_PAGE_SIZE), parse_mode="HTML", disable_web_page_preview=True)
+    await callback.answer()
+
+
+async def cancel_my_transaction(callback: CallbackQuery, user: User, tx_id_raw: str) -> None:
+    try:
+        tx_id = int(tx_id_raw)
+    except ValueError:
+        await callback.answer("Invalid transaction.", show_alert=True)
+        return
+    cancelled = False
+    async with session_scope() as session:
+        user = await session.get(User, user.user_id)
+        tx = await session.get(Transaction, tx_id)
+        if not tx or tx.user_id != user.user_id:
+            await callback.answer("Transaction not found.", show_alert=True)
+            return
+        if tx.status != "pending" or tx.verify_status == "verified":
+            await callback.answer("This transaction can no longer be cancelled.", show_alert=True)
+            return
+        tx.status = "cancelled"
+        tx.resolved_at = utcnow()
+        user.is_locked = False
+        cancelled = True
+    if cancelled:
+        await callback.answer("🚫 Cancelled.", show_alert=True)
+        async with session_scope() as session:
+            await send_tracked_menu_message(session, callback.bot, user.user_id, callback.message.chat.id, msg.cancelled_user_text(tx_id, lang_of(user)), reply_markup=kb.persistent_menu(user))
+        destinations: list[int | str] = []
+        if settings().admin_review_chat_id:
+            destinations.append(settings().admin_review_chat_id)
+        destinations.extend(settings().admin_ids)
+        for chat_id in destinations:
+            try:
+                await callback.bot.send_message(chat_id, f"🚫 TX {tx_id} was cancelled by the user.")
+            except (TelegramBadRequest, TelegramForbiddenError):
+                continue
+
+
+async def switch_language(callback: CallbackQuery, user: User, lang: str) -> None:
+    if lang not in {"en", "hi"}:
+        await callback.answer("Unknown language.", show_alert=True)
+        return
+    async with session_scope() as session:
+        user = await session.get(User, user.user_id)
+        user.lang = lang
+    reply = "🇬🇧 Language switched to English ✅" if lang == "en" else "🇮🇳 भाषा अब हिंदी में ✅"
+    await callback.answer(reply, show_alert=True)
+    async with session_scope() as session:
+        await send_tracked_menu_message(session, callback.bot, user.user_id, callback.message.chat.id, reply, reply_markup=kb.persistent_menu(user))
 
 
 async def handle_verify_check(callback: CallbackQuery, user: User, tx_id_raw: str) -> None:
@@ -669,14 +818,14 @@ async def publish_ad(callback: CallbackQuery, user: User) -> None:
         await clear_flow(session, user.user_id)
         await session.flush()
 
-        await post_public_ad(callback, ad, data, public_username(user))
+        await post_public_ad(callback, ad, data, public_username(user), badge=badge_for(user.safe_sell_volume) or "")
         await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.ad_published(ref_code), reply_markup=kb.persistent_menu(user))
 
 
-async def post_public_ad(callback: CallbackQuery, ad: Ad, data: dict, username: str) -> None:
+async def post_public_ad(callback: CallbackQuery, ad: Ad, data: dict, username: str, badge: str = "") -> None:
     dm_url = f"https://t.me/{username}" if not username.isdigit() else f"tg://user?id={username}"
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Message", url=dm_url)]])
-    text = msg.ad_text(data, username, preview=False)
+    text = msg.ad_text(data, username, preview=False, badge=badge)
     failures: list[str] = []
     if settings().ads_channel_id:
         try:
@@ -717,7 +866,7 @@ async def enter_safe_sell(message: Message, user: User) -> None:
             user.user_id,
             message.chat.id,
             safe_sell_banner_file(),
-            msg.SAFE_SELL_LANDING,
+            msg.safe_sell_landing(lang_of(user)),
             reply_markup=kb.express_landing(user.wallet_balance, settings().support_url),
         )
 
@@ -728,7 +877,7 @@ async def show_payment_modes(callback: CallbackQuery, user: User) -> None:
         modes = list(result.scalars().all())
         await transition(session, user.user_id, states.EXPRESS_PAYMENT_MODE, {}, push=True)
         await animation.animate_action(callback, "Loading payment methods", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.PAYMENT_MODE_SELECT, reply_markup=kb.payment_modes(modes))
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(0, lang=lang_of(user)) + "\n\n" + msg.PAYMENT_MODE_SELECT, reply_markup=kb.payment_modes(modes))
 
 
 async def set_express_mode(callback: CallbackQuery, user: User, payment_mode: str) -> None:
@@ -740,7 +889,7 @@ async def set_express_mode(callback: CallbackQuery, user: User, payment_mode: st
         tiers = await get_rate_tiers(session, payment_mode)
         await transition(session, user.user_id, states.EXPRESS_AMOUNT_INPUT, {"payment_mode": payment_mode, "tx_type": "express_sell"}, push=True)
         await animation.animate_action(callback, f"Loading {payment_mode} rates", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(1, lang=lang_of(user)) + "\n\n" + msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
 
 
 async def handle_express_amount(message: Message, user: User, text: str) -> None:
@@ -760,7 +909,7 @@ async def process_express_amount(message: Message, user: User, amount: Decimal) 
         rate = await rate_for_amount(session, payment_mode, amount)
         if rate is None:
             tiers = await get_rate_tiers(session, payment_mode)
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(1, lang=lang_of(user)) + "\n\n" + msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
             return
         amount_inr = as_money(amount * rate)
         await transition(
@@ -770,14 +919,14 @@ async def process_express_amount(message: Message, user: User, amount: Decimal) 
             {"amount_usd": str(amount), "amount_inr": str(amount_inr), "rate": str(rate)},
             push=True,
         )
-        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.inr_preview(amount_inr), reply_markup=kb.token_select("express"))
+        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(2, lang=lang_of(user)) + "\n\n" + msg.inr_preview(amount_inr), reply_markup=kb.token_select("express"))
 
 
 async def set_express_token(callback: CallbackQuery, user: User, token: str) -> None:
     async with session_scope() as session:
         await transition(session, user.user_id, states.EXPRESS_CHAIN_SELECT, {"token": token}, push=True)
         await animation.animate_action(callback, f"Preparing {token} networks", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.express_chain_select(token), reply_markup=kb.express_chains(token, "express"))
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(3, lang=lang_of(user)) + "\n\n" + msg.express_chain_select(token), reply_markup=kb.express_chains(token, "express"))
 
 
 async def set_express_chain(callback: CallbackQuery, user: User, chain: str) -> None:
@@ -788,12 +937,13 @@ async def set_express_chain(callback: CallbackQuery, user: User, chain: str) -> 
         address = deposit_address(settings(), token, chain)
         await transition(session, user.user_id, states.EXPRESS_DEPOSIT_ADDRESS, {"chain": chain, "deposit_address": address}, push=True)
         await animation.animate_action(callback, "Generating deposit address", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.deposit_instructions(token, chain, address), reply_markup=kb.check_payment(), parse_mode="HTML")
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(4, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(token, chain, address, lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
 
 
 async def request_screenshot(callback: CallbackQuery, user: User) -> None:
     async with session_scope() as session:
         bot_session = await get_or_create_session(session, user.user_id)
+        wallet_flow = bot_session.state == states.WALLET_DEPOSIT_ADDRESS
         if bot_session.state == states.EXPRESS_DEPOSIT_ADDRESS:
             await transition(session, user.user_id, states.EXPRESS_AWAITING_SCREENSHOT, {}, push=True)
         elif bot_session.state == states.WALLET_DEPOSIT_ADDRESS:
@@ -803,9 +953,12 @@ async def request_screenshot(callback: CallbackQuery, user: User) -> None:
             return
         data = session_data(bot_session)
         supported, _ = chainverify.support_status(settings(), data.get("token"), data.get("chain"), data.get("deposit_address"))
-        prompt = msg.TX_HASH_PROMPT if supported else msg.SCREENSHOT_PROMPT
+        lang = lang_of(user)
+        prompt = (msg.tx_hash_prompt(lang) if supported else msg.SCREENSHOT_PROMPT)
+        verify_step = 4 if wallet_flow else 5
+        prompt = msg.steps_header(verify_step, wallet_flow=wallet_flow, lang=lang) + "\n\n" + prompt
         await animation.animate_action(callback, "Connecting to blockchain", enabled=settings().ui_animations, style="spinner")
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, prompt)
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, prompt, parse_mode="HTML")
 
 
 async def open_wallet(message: Message, user: User) -> None:
@@ -815,7 +968,7 @@ async def open_wallet(message: Message, user: User) -> None:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.LOCKED_ACTION, reply_markup=kb.persistent_menu(user))
             return
         await set_state(session, user.user_id, states.WALLET_MENU, data={}, stack=[states.IDLE])
-        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.wallet(user.wallet_balance), reply_markup=kb.wallet_menu())
+        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.wallet(user.wallet_balance, lang_of(user)), reply_markup=kb.wallet_menu())
 
 
 async def wallet_add(callback: CallbackQuery, user: User) -> None:
@@ -823,7 +976,7 @@ async def wallet_add(callback: CallbackQuery, user: User) -> None:
         await transition(session, user.user_id, states.WALLET_ADD_AMOUNT, {"tx_type": "wallet_deposit", "payment_mode": "wallet"}, push=True)
         await delete_callback_message(callback)
         await callback.answer()
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.WALLET_ADD_AMOUNT, reply_markup=kb.back())
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(0, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.WALLET_ADD_AMOUNT, reply_markup=kb.back())
 
 
 async def handle_wallet_deposit_amount(message: Message, user: User, text: str) -> None:
@@ -840,14 +993,14 @@ async def handle_wallet_deposit_amount(message: Message, user: User, text: str) 
             {"amount_usd": str(amount), "amount_inr": "0"},
             push=True,
         )
-        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, "Select Your Crypto Token 👇", reply_markup=kb.token_select("wallet"))
+        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(1, wallet_flow=True, lang=lang_of(user)) + "\n\nSelect Your Crypto Token 👇", reply_markup=kb.token_select("wallet"))
 
 
 async def set_wallet_token(callback: CallbackQuery, user: User, token: str) -> None:
     async with session_scope() as session:
         await transition(session, user.user_id, states.WALLET_ADD_CHAIN, {"token": token}, push=True)
         await animation.animate_action(callback, f"Preparing {token} networks", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.express_chain_select(token), reply_markup=kb.express_chains(token, "wallet"))
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(2, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.express_chain_select(token), reply_markup=kb.express_chains(token, "wallet"))
 
 
 async def set_wallet_chain(callback: CallbackQuery, user: User, chain: str) -> None:
@@ -864,7 +1017,7 @@ async def set_wallet_chain(callback: CallbackQuery, user: User, chain: str) -> N
             push=True,
         )
         await animation.animate_action(callback, "Generating deposit address", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.deposit_instructions(token, chain, address), reply_markup=kb.check_payment(), parse_mode="HTML")
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(3, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(token, chain, address, lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
 
 
 async def wallet_withdraw(callback: CallbackQuery, user: User) -> None:
@@ -932,6 +1085,8 @@ async def show_my_stats(message: Message, user: User) -> None:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.LOCKED_STATS, reply_markup=kb.persistent_menu(user))
             return
         member_since = user.first_seen_at.strftime("%d %b, %Y")
+        result = await session.execute(select(func.count(User.user_id)).where(User.referred_by == user.user_id))
+        referral_count = result.scalar() or 0
         await send_tracked_menu_message(
             session,
             message.bot,
@@ -943,8 +1098,11 @@ async def show_my_stats(message: Message, user: User) -> None:
                 user.ads_posted_count,
                 user.safe_sells_completed,
                 user.safe_sell_volume,
+                badge=badge_for(user.safe_sell_volume) or "",
+                referrals=referral_count,
+                lang=lang_of(user),
             ),
-            reply_markup=kb.persistent_menu(user),
+            reply_markup=kb.my_stats_actions(),
         )
 
 
@@ -1024,34 +1182,34 @@ async def render_state(message: Message, user: User, state: str) -> None:
         elif state == states.AD_PAYMENT_METHOD:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.PAYMENT_METHOD, reply_markup=kb.payment_methods())
         elif state == states.AD_PREVIEW:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.ad_text(data, public_username(user), preview=True), reply_markup=kb.ad_preview(), parse_mode=ParseMode.HTML)
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.ad_text(data, public_username(user), preview=True, badge=badge_for(user.safe_sell_volume) or ""), reply_markup=kb.ad_preview(), parse_mode=ParseMode.HTML)
         elif state == states.EXPRESS_LANDING:
-            await send_tracked_menu_photo(session, message.bot, user.user_id, message.chat.id, safe_sell_banner_file(), msg.SAFE_SELL_LANDING, reply_markup=kb.express_landing(user.wallet_balance, settings().support_url))
+            await send_tracked_menu_photo(session, message.bot, user.user_id, message.chat.id, safe_sell_banner_file(), msg.safe_sell_landing(lang_of(user)), reply_markup=kb.express_landing(user.wallet_balance, settings().support_url))
         elif state == states.EXPRESS_PAYMENT_MODE:
             result = await session.execute(select(PaymentMode))
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.PAYMENT_MODE_SELECT, reply_markup=kb.payment_modes(list(result.scalars().all())))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(0, lang=lang_of(user)) + "\n\n" + msg.PAYMENT_MODE_SELECT, reply_markup=kb.payment_modes(list(result.scalars().all())))
         elif state == states.EXPRESS_AMOUNT_INPUT:
             payment_mode = data.get("payment_mode", "UPI")
             tiers = await get_rate_tiers(session, payment_mode)
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(1, lang=lang_of(user)) + "\n\n" + msg.exchange_rates(payment_mode, tiers), reply_markup=kb.quick_amount("express"))
         elif state == states.EXPRESS_TOKEN_SELECT:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.inr_preview(Decimal(str(data.get("amount_inr", "0")))), reply_markup=kb.token_select("express"))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(2, lang=lang_of(user)) + "\n\n" + msg.inr_preview(Decimal(str(data.get("amount_inr", "0")))), reply_markup=kb.token_select("express"))
         elif state == states.EXPRESS_CHAIN_SELECT:
             token = data.get("token", "USDT")
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.express_chain_select(token), reply_markup=kb.express_chains(token, "express"))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(3, lang=lang_of(user)) + "\n\n" + msg.express_chain_select(token), reply_markup=kb.express_chains(token, "express"))
         elif state == states.EXPRESS_DEPOSIT_ADDRESS:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", "")), reply_markup=kb.check_payment(), parse_mode="HTML")
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(4, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", ""), lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
         elif state == states.WALLET_MENU:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.wallet(user.wallet_balance), reply_markup=kb.wallet_menu())
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.wallet(user.wallet_balance, lang_of(user)), reply_markup=kb.wallet_menu())
         elif state == states.WALLET_ADD_AMOUNT:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.WALLET_ADD_AMOUNT, reply_markup=kb.back())
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(0, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.WALLET_ADD_AMOUNT, reply_markup=kb.back())
         elif state == states.WALLET_ADD_TOKEN:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, "Select Your Crypto Token 👇", reply_markup=kb.token_select("wallet"))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(1, wallet_flow=True, lang=lang_of(user)) + "\n\nSelect Your Crypto Token 👇", reply_markup=kb.token_select("wallet"))
         elif state == states.WALLET_ADD_CHAIN:
             token = data.get("token", "USDT")
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.express_chain_select(token), reply_markup=kb.express_chains(token, "wallet"))
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(2, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.express_chain_select(token), reply_markup=kb.express_chains(token, "wallet"))
         elif state == states.WALLET_DEPOSIT_ADDRESS:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", "")), reply_markup=kb.check_payment(), parse_mode="HTML")
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(3, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", ""), lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
         elif state == states.WALLET_WITHDRAW_AMOUNT:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.WITHDRAW_AMOUNT, reply_markup=kb.back())
         elif state == states.WALLET_WITHDRAW_DEST:

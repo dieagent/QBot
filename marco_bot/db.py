@@ -51,34 +51,49 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
             raise
 
 
-def _ensure_transaction_columns_sync(conn) -> None:
-    """Idempotently add on-chain verification columns to existing databases.
-
-    create_all only creates missing tables, so deployments with an existing
-    transactions table need these ALTERs. Safe to run on every startup.
-    """
+def _columns_sync(conn, table: str) -> set[str]:
     dialect = conn.dialect.name
     if dialect == "sqlite":
-        rows = conn.exec_driver_sql("PRAGMA table_info('transactions')").fetchall()
-        existing = {row[1] for row in rows}
-    elif "postgres" in dialect:
+        rows = conn.exec_driver_sql(f"PRAGMA table_info('{table}')").fetchall()
+        return {row[1] for row in rows}
+    if "postgres" in dialect:
         rows = conn.exec_driver_sql(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'transactions'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %(t)s",
+            {"t": table},
         ).fetchall()
-        existing = {row[0] for row in rows}
-    else:
-        return
-    if not existing:
-        return  # table does not exist yet; create_all already handled fresh installs
-    additions = [
+        return {row[0] for row in rows}
+    return set()
+
+
+# Columns added after the original schema; ALTERed in idempotently at startup.
+_TABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "transactions": [
         ("chain_tx_hash", "TEXT"),
         ("verify_status", "VARCHAR(16)"),
         ("verified_amount", "NUMERIC(24, 8)"),
         ("verify_detail", "TEXT"),
-    ]
-    for column_name, column_type in additions:
-        if column_name not in existing:
-            conn.exec_driver_sql(f"ALTER TABLE transactions ADD COLUMN {column_name} {column_type}")
+        ("payout_reference", "TEXT"),
+    ],
+    "users": [
+        ("referred_by", "BIGINT"),
+        ("lang", "VARCHAR(5)"),
+    ],
+}
+
+
+def _ensure_transaction_columns_sync(conn) -> None:
+    """Idempotently add newer columns to existing databases.
+
+    create_all only creates missing tables, so deployments with an existing
+    schema need these ALTERs. Safe to run on every startup.
+    """
+    for table, additions in _TABLE_COLUMNS.items():
+        existing = _columns_sync(conn, table)
+        if not existing:
+            continue  # table does not exist yet; create_all handles fresh installs
+        for column_name, column_type in additions:
+            if column_name not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_name} {column_type}")
 
 
 async def init_db(settings: Settings) -> None:
