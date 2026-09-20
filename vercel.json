@@ -1,8 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["bom1"],
   "functions": {
     "api/webhook.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "memory": 2048
     }
   }
 }
