@@ -78,6 +78,12 @@ Long polling cannot run on Vercel, so the bot ships a webhook runtime:
      (set it explicitly so redeploys never break the Telegram webhook).
    - `WEBHOOK_SECRET` — any random string; the function rejects webhook
      requests that do not carry it.
+   - `CRON_SECRET` — any random string; Vercel Cron attaches it as a
+     `Bearer` token when hitting `/api/cron` (daily admin summary at
+     09:00 IST, Hobby plan = 1 run/day — see `crons` in `vercel.json`).
+   - `REFERRAL_BONUS_USD` *(optional, default 0)* — wallet bonus paid to a
+     referrer when their referred user completes a first approved SAFE SELL.
+     Leave `0` to track referrals without paying bonuses.
    - The rest is the same as the Railway deployment.
 3. Deploy, then open `https://<your-app>.vercel.app/api/webhook` once — the
    first request performs cold-start init and registers the webhook with
@@ -94,6 +100,10 @@ Serverless limitations are handled by design:
 - The engine uses `NullPool` so one container survives sequential requests.
 - Long polling (`main.py`) stays as the entrypoint for Railway/local runs;
   it is unused on Vercel.
+- A daily ops summary (volumes, pending queue, new users) is posted to the
+  admin review chat by Vercel Cron (`/api/cron`, `CRON_SECRET`-protected).
+- Unhandled webhook errors alert the admin chat in Telegram, throttled to at
+  most one alert per 5 minutes, so retry storms cannot spam it.
 
 ## Deposit Address Format
 
@@ -117,12 +127,42 @@ If an address is missing, users will see a visible `CONFIGURE_TOKEN_CHAIN_ADDRES
 /setrate UPI 10 600 94.0
 /setrate UPI 5001 + 97.0
 /broadcast message text
+/receipt 42 831204912345
+/export
 /emojiids
 ```
+
+- `/receipt TX_ID PAYOUT_REFERENCE` attaches a payout reference (e.g. the UPI
+  UTR) to an approved transaction and DMs the user a payout receipt card.
+- `/export` uploads a UTF-8 CSV (latest 5000 transactions) with hashes,
+  verified amounts and payout references for accounting.
+- **Reject reasons:** the admin review card's **Reject ❌** button now opens
+  one-tap reasons (wrong network / wrong amount / hash not found / other);
+  the chosen reason is included in the user notification.
 
 Use `/emojiids` (or `/emojiiids`) as a reply to a message that contains premium/custom emojis, or include premium emojis in the same command message, to print the Telegram custom emoji IDs needed for custom emoji rendering.
 
 The bot runtime now uses the updated premium emoji IDs from the latest deployment branch.
+
+## User-Facing Feature Pack
+
+- **Step tracker** — SAFE SELL and wallet deposit flows show a
+  `Step N/M` checklist header on every screen.
+- **📄 My Transactions** — users list their own deals with live status,
+  on-chain verification stamps and explorer-linked hashes.
+- **Cancel request** — a pending transaction can be cancelled by the user
+  with one tap (before on-chain verification succeeds), unlocking the account.
+- **Exact crediting** — stablecoin (USDT/USDC) wallet deposits credit the full
+  on-chain verified amount, so overpayment is credited instead of lost.
+- **Referrals** — `/start ref_<id>` deep links are recorded for brand-new
+  users; `/refer` shows the personal invite link and count; an optional
+  `REFERRAL_BONUS_USD` bonus pays the referrer when the invitee completes
+  their first approved SAFE SELL.
+- **Trust badges** — 🥉 (≥$250) / 🥈 (≥$1000) / 🥇 (≥$5000) completed SAFE
+  SELL volume badges appear in My Stats and next to the username in ads.
+- **Hindi toggle** — `/lang` or the 🇮🇳 button on the stats screen switches
+  the core screens (welcome, SAFE SELL, deposit, verification, wallet) to
+  Hindi; anything untranslated falls back to English.
 
 ## On-Chain Verification
 

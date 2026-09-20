@@ -15,15 +15,21 @@ fails loudly instead of silently using it.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
+import time
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import Update
+from sqlalchemy import func, select
 
 from . import review
 from .config import Settings, load_settings
-from .db import configure_database, init_db
+from .db import configure_database, init_db, session_scope
 from .handlers import admin, user
+from .models import Transaction, User
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -153,3 +159,136 @@ async def _bounded_sweep(settings: Settings, bot: Bot) -> None:
             await review.sweep_pending(settings, bot)
     except Exception:
         logger.warning("pending sweep failed", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Ops visibility: daily summary (Vercel cron) + throttled error alerts
+# ---------------------------------------------------------------------------
+
+ALERT_MIN_INTERVAL_SECONDS = 300.0
+_last_alert_at = 0.0
+
+
+def _admin_destinations(settings: Settings) -> list[int | str]:
+    destinations: list[int | str] = []
+    if settings.admin_review_chat_id:
+        destinations.append(settings.admin_review_chat_id)
+    destinations.extend(settings.admin_ids)
+    return destinations
+
+
+async def daily_summary(authorization: str | None) -> dict:
+    """Build and send the last-24h ops summary. Guards with CRON_SECRET."""
+    settings = await ensure_initialized()
+    if not settings.cron_secret:
+        logger.warning("daily_summary called but CRON_SECRET is not configured")
+        return {"ok": False, "error": "CRON_SECRET not configured"}
+    if authorization != f"Bearer {settings.cron_secret}":
+        return {"ok": False, "error": "unauthorized"}
+
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    async with session_scope() as session:
+        by_type = (
+            await session.execute(
+                select(
+                    Transaction.type,
+                    Transaction.status,
+                    func.count(Transaction.tx_id),
+                    func.coalesce(func.sum(Transaction.amount_usd), 0),
+                )
+                .where(Transaction.created_at >= cutoff)
+                .group_by(Transaction.type, Transaction.status)
+            )
+        ).all()
+        per_chain = (
+            await session.execute(
+                select(
+                    Transaction.coin,
+                    Transaction.chain,
+                    func.count(Transaction.tx_id),
+                    func.coalesce(func.sum(Transaction.amount_usd), 0),
+                )
+                .where(
+                    Transaction.created_at >= cutoff,
+                    Transaction.type == "wallet_deposit",
+                    Transaction.status == "approved",
+                )
+                .group_by(Transaction.coin, Transaction.chain)
+            )
+        ).all()
+        pending_count = (
+            await session.execute(
+                select(func.count(Transaction.tx_id)).where(Transaction.status == "pending")
+            )
+        ).scalar_one()
+        new_users = (
+            await session.execute(
+                select(func.count(User.user_id)).where(User.first_seen_at >= cutoff)
+            )
+        ).scalar_one()
+        total_users = (await session.execute(select(func.count(User.user_id)))).scalar_one()
+
+    labels = {
+        "express_sell": "SAFE SELL",
+        "wallet_deposit": "Wallet deposit",
+        "withdrawal": "Withdrawal",
+    }
+    lines = ["📊 Daily Summary — last 24h", ""]
+    if by_type:
+        for tx_type, status, count, volume in sorted(by_type):
+            label = labels.get(tx_type, tx_type)
+            icon = {"approved": "✅", "pending": "⏳", "rejected": "❌", "cancelled": "🚫"}.get(status, "•")
+            lines.append(f"{icon} {label} ({status}): {count} — ${float(volume):,.2f}")
+    else:
+        lines.append("No transactions in the last 24h.")
+    if per_chain:
+        lines.append("")
+        lines.append("Approved wallet deposits per network:")
+        for coin, chain, count, volume in sorted(per_chain):
+            lines.append(f"🪙 {coin or '-'} on {chain or '-'}: {count} — ${float(volume):,.2f}")
+    lines.extend(
+        [
+            "",
+            f"⏳ Pending right now: {pending_count}",
+            f"👥 Users: {total_users} total, {new_users} new in 24h",
+        ]
+    )
+    text = "\n".join(lines)
+
+    bot = Bot(token=settings.bot_token)
+    delivered = 0
+    try:
+        for chat_id in _admin_destinations(settings):
+            try:
+                await bot.send_message(chat_id, text)
+                delivered += 1
+            except (TelegramBadRequest, TelegramForbiddenError):
+                continue
+    finally:
+        await bot.session.close()
+    return {"ok": True, "delivered": delivered, "pending": pending_count, "new_users": new_users}
+
+
+async def alert_exception(exc: BaseException) -> None:
+    """Throttled webhook error alert, telegraphed to admins (≤1 per 5 min)."""
+    global _last_alert_at
+    now = time.monotonic()
+    if now - _last_alert_at < ALERT_MIN_INTERVAL_SECONDS:
+        return
+    _last_alert_at = now
+    logger.warning("alerting admins about webhook error: %r", exc)
+    try:
+        settings = _settings or load_settings()
+        detail = html.escape(repr(exc)[:800])
+        bot = Bot(token=settings.bot_token)
+        try:
+            for chat_id in _admin_destinations(settings):
+                await bot.send_message(
+                    chat_id,
+                    f"🚨 Webhook error (further alerts throttled 5 min):\n<code>{detail}</code>",
+                    parse_mode="HTML",
+                )
+        finally:
+            await bot.session.close()
+    except Exception:
+        logger.exception("failed to alert admins about %r", exc)

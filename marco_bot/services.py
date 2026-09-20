@@ -462,6 +462,56 @@ def stats_banner_file() -> FSInputFile:
     return FSInputFile(str(banner_path), filename="stats_banner1.jpg")
 
 
+# ---------------------------------------------------------------------------
+# Trust badges, referrals, credit rules
+# ---------------------------------------------------------------------------
+
+BADGE_TIERS = [
+    (Decimal("5000"), "🥇 GOLD"),
+    (Decimal("1000"), "🥈 SILVER"),
+    (Decimal("250"), "🥉 BRONZE"),
+]
+
+STABLE_COINS = {"USDT", "USDC"}
+
+
+def badge_for(volume: Decimal | int | float | str) -> str | None:
+    amount = Decimal(str(volume))
+    for threshold, label in BADGE_TIERS:
+        if amount >= threshold:
+            return label
+    return None
+
+
+def referral_link(bot_username: str, user_id: int) -> str:
+    return f"https://t.me/{bot_username.lstrip('@')}?start=ref_{user_id}"
+
+
+def parse_referral_payload(text: str | None, new_user_id: int) -> int | None:
+    """Extract the referrer id from '/start ref_<id>' (never self-referral)."""
+    if not text:
+        return None
+    parts = text.split()
+    if len(parts) < 2:
+        return None
+    payload = parts[1].strip()
+    if not payload.startswith("ref_"):
+        return None
+    raw = payload[4:]
+    if not raw.isdigit():
+        return None
+    referrer_id = int(raw)
+    return None if referrer_id == new_user_id else referrer_id
+
+
+def credit_amount_for(tx, fallback_type: str = "wallet_deposit") -> Decimal:
+    """Exact-credit rule: wallet top-ups in stablecoins credit the on-chain
+    verified amount (overpay is credited in full); otherwise the requested USD."""
+    if tx.type == "wallet_deposit" and tx.coin in STABLE_COINS and tx.verified_amount is not None:
+        return as_money(tx.verified_amount)
+    return as_money(tx.amount_usd)
+
+
 def public_username(user: User) -> str:
     return user.username or str(user.user_id)
 
