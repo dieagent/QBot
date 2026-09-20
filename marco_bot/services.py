@@ -290,6 +290,31 @@ async def add_safe_sell_stats(session: AsyncSession, user: User, amount_usd: Dec
     stats.total_deals_completed += 1
 
 
+# Telegram file_id cache: banner photos are only uploaded once per container;
+# later sends reference the cached file_id, saving a multi-hundred-KB upload
+# (and a few hundred ms) on every menu render.
+_photo_file_id_cache: dict[str, str] = {}
+
+
+def _photo_cache_key(photo) -> str | None:
+    path = getattr(photo, "path", None)  # FSInputFile
+    if path:
+        return f"path:{path}"
+    filename = getattr(photo, "filename", None)  # BufferedInputFile
+    if filename:
+        return f"file:{filename}"
+    return None
+
+
+async def _send_photo_cached(bot: Bot, chat_id: int | str, photo, **kwargs) -> Message:
+    key = _photo_cache_key(photo)
+    cached = _photo_file_id_cache.get(key) if key else None
+    message = await bot.send_photo(chat_id=chat_id, photo=cached or photo, **kwargs)
+    if key and not cached and message.photo:
+        _photo_file_id_cache[key] = message.photo[-1].file_id
+    return message
+
+
 async def send_brand_message(
     bot: Bot,
     chat_id: int | str,
@@ -304,17 +329,19 @@ async def send_brand_message(
     if session is not None and user_id is not None:
         await delete_active_menu_message(session, bot, user_id)
     if settings.banner_image_path:
-        message = await bot.send_photo(
-            chat_id=chat_id,
-            photo=FSInputFile(settings.banner_image_path),
+        message = await _send_photo_cached(
+            bot,
+            chat_id,
+            FSInputFile(settings.banner_image_path),
             caption=text,
             reply_markup=reply_markup,
             parse_mode=resolved_parse_mode,
         )
     else:
-        message = await bot.send_photo(
-            chat_id=chat_id,
-            photo=brand_banner_file(),
+        message = await _send_photo_cached(
+            bot,
+            chat_id,
+            brand_banner_file(),
             caption=text,
             reply_markup=reply_markup,
             parse_mode=resolved_parse_mode,
@@ -340,9 +367,10 @@ async def send_tracked_menu_photo(
 ) -> Message:
     resolved_parse_mode = None if caption_entities else (parse_mode or ("HTML" if "<tg-emoji" in caption else None))
     await delete_active_menu_message(session, bot, user_id)
-    message = await bot.send_photo(
-        chat_id=chat_id,
-        photo=photo,
+    message = await _send_photo_cached(
+        bot,
+        chat_id,
+        photo,
         caption=caption,
         reply_markup=reply_markup,
         parse_mode=resolved_parse_mode,
