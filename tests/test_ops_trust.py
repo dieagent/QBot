@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
+import inspect
 from pathlib import Path
 
 import pytest
@@ -198,3 +199,13 @@ def test_my_stats_render_hindi_keeps_extras() -> None:
 def test_my_stats_render_without_extras_unchanged() -> None:
     text = msg.my_stats_render("alice", "01 Jan, 2026", 0, 0, Decimal("0"))
     assert "Statistics" in text and "Referrals: 0" in text
+
+
+def test_serverless_bootcheck_wired_into_cold_start() -> None:
+    """Regression: production boot crashed with `name 'bootcheck' is not defined`
+    because the run-check call landed without the module import."""
+    from marco_bot import serverless
+
+    assert callable(serverless.bootcheck.run_boot_check)
+    source = inspect.getsource(serverless.ensure_initialized)
+    assert "bootcheck.run_boot_check(settings)" in source
