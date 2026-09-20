@@ -25,7 +25,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import Update
 from sqlalchemy import func, select
 
-from . import review
+from . import bootcheck, review
 from .config import Settings, load_settings
 from .db import configure_database, init_db, session_scope
 from .handlers import admin, user
