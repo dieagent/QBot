@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import AsyncIterator
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import Settings
@@ -57,8 +57,10 @@ def _columns_sync(conn, table: str) -> set[str]:
         rows = conn.exec_driver_sql(f"PRAGMA table_info('{table}')").fetchall()
         return {row[1] for row in rows}
     if "postgres" in dialect:
-        rows = conn.exec_driver_sql(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %(t)s",
+        # text() -> SQLAlchemy renders the correct paramstyle per dialect;
+        # exec_driver_sql with %(name)s breaks on asyncpg (it wants $1).
+        rows = conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
             {"t": table},
         ).fetchall()
         return {row[0] for row in rows}
