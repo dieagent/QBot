@@ -72,6 +72,7 @@ class Transaction(Base):
     verified_amount: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
     verify_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     payout_reference: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. UPI UTR the admin paid with
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5 stars, rated after payout receipt
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
@@ -85,6 +86,8 @@ class GlobalStats(Base):
     total_safe_sold_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     today_safe_sold_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     today_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # JSON bag for ops throttling timestamps (boot alerts, aging-queue alerts...)
+    bot_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_deals_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 

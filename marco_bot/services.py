@@ -14,12 +14,12 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import BufferedInputFile, FSInputFile, Message, User as TelegramUser
 from aiogram.types import MessageEntity
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import states
 from .config import Settings
-from .models import CaptchaAttempt, GlobalStats, RateTier, RequiredGroup, User, UserSession, utcnow
+from .models import CaptchaAttempt, GlobalStats, RateTier, RequiredGroup, Transaction, User, UserSession, utcnow
 
 
 def parse_decimal(value: str) -> Decimal | None:
@@ -510,6 +510,100 @@ def credit_amount_for(tx, fallback_type: str = "wallet_deposit") -> Decimal:
     if tx.type == "wallet_deposit" and tx.coin in STABLE_COINS and tx.verified_amount is not None:
         return as_money(tx.verified_amount)
     return as_money(tx.amount_usd)
+
+
+def next_badge(volume: Decimal | int | float | str) -> tuple[Decimal, str] | None:
+    """Next badge tier still to be earned, or None when GOLD is already reached."""
+    amount = Decimal(str(volume))
+    for threshold, label in reversed(BADGE_TIERS):
+        if amount < threshold:
+            return threshold, label
+    return None
+
+
+def badge_progress_line(volume: Decimal | int | float | str) -> str:
+    """Human sentence for My Stats: progress to the next badge, or cap reached."""
+    amount = Decimal(str(volume))
+    upcoming = next_badge(amount)
+    if upcoming is None:
+        return "🏆 Top badge reached — legend status!"
+    threshold, label = upcoming
+    remaining = threshold - amount
+    return f"🏅 {label} badge — ${remaining:.2f} more volume to unlock"
+
+
+def serialize_bot_state(state: dict) -> str:
+    return json.dumps(state or {})
+
+
+def parse_bot_state(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+async def get_bot_state(session: AsyncSession) -> dict:
+    stats = await session.get(GlobalStats, 1)
+    if stats is None:
+        return {}
+    return parse_bot_state(stats.bot_state)
+
+
+async def set_bot_state_keys(session: AsyncSession, values: dict) -> dict:
+    """Merge keys into the persisted bot_state blob and return the new state."""
+    stats = await session.get(GlobalStats, 1)
+    if stats is None:
+        stats = GlobalStats(id=1)
+        session.add(stats)
+    state = parse_bot_state(stats.bot_state)
+    state.update(values)
+    stats.bot_state = serialize_bot_state(state)
+    return state
+
+
+def bot_state_timestamp(state: dict, key: str) -> datetime | None:
+    raw = state.get(key)
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def throttled(state: dict, key: str, interval_seconds: float, *, now: datetime | None = None) -> bool:
+    """True when the named action fired within the last interval."""
+    stamp = bot_state_timestamp(state, key)
+    now = now or utcnow()
+    if stamp is None:
+        return False
+    delta = now - stamp
+    if delta < timedelta(0):
+        return False  # clock skew — never block on a future timestamp
+    return delta < timedelta(seconds=interval_seconds)
+
+
+async def platform_rating(session: AsyncSession) -> tuple[Decimal, int]:
+    """(average rating, rated deal count). Average is 0.00 when no ratings yet."""
+    row = (
+        await session.execute(
+            select(func.count(Transaction.tx_id), func.avg(Transaction.rating)).where(Transaction.rating.is_not(None))
+        )
+    ).one()
+    count = row[0] or 0
+    avg = Decimal(str(row[1])) if row[1] is not None else Decimal("0")
+    return avg.quantize(Decimal("0.01")), int(count)
+
+
+def platform_rating_line(avg: Decimal, count: int, min_count: int = 3) -> str | None:
+    """Trust line for My Stats — only shown once a few ratings exist."""
+    if count < min_count:
+        return None
+    return f"⭐ Bot rated {avg}/5 by {count} users"
 
 
 def public_username(user: User) -> str:

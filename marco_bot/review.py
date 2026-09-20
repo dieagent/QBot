@@ -22,16 +22,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from sqlalchemy import func, select
 
 from . import keyboards as kb
 from . import messages as msg
 from .config import Settings
 from .db import session_scope
-from .models import Transaction, User
+from .models import Transaction, User, utcnow
+from .services import get_bot_state, set_bot_state_keys, throttled
 from .translations import lang_of
 
 VERIFIABLE_TYPES = {"express_sell", "wallet_deposit"}
@@ -123,6 +126,71 @@ async def _notify_user(bot: Bot, user_id: int, text: str) -> None:
         await bot.send_message(user_id, text)
     except (TelegramBadRequest, TelegramForbiddenError):
         pass
+
+
+PENDING_AGE_MINUTES = 45          # a deal older than this counts as "stuck"
+AGING_ALERT_INTERVAL_SECONDS = 30 * 60  # re-alert at most every 30 min while stuck
+_AGING_STATE_KEY = "last_aging_alert_at"
+AGING_ALERT_SAMPLE = 5
+
+
+def admin_chat_destinations(settings: Settings) -> list[int | str]:
+    """Every chat that should receive ops notifications (alerts, summaries)."""
+    destinations: list[int | str] = []
+    if settings.admin_review_chat_id:
+        destinations.append(settings.admin_review_chat_id)
+    destinations.extend(settings.admin_ids)
+    return destinations
+
+
+def aging_alert_text(stuck: list[Transaction], total: int, age_minutes: int, *, now=None) -> str:
+    now = now or utcnow()
+    plural = "s" if total != 1 else ""
+    lines = [f"⏰ {total} deal{plural} pending ≥{age_minutes} min — users are waiting!", ""]
+    for tx in stuck[:AGING_ALERT_SAMPLE]:
+        age = max(0, int((now - tx.created_at).total_seconds() // 60)) if tx.created_at else age_minutes
+        label = tx.type.replace("_", " ")
+        lines.append(f"⏳ TX {tx.tx_id} · {label} · ${tx.amount_usd:.2f} · user {tx.user_id} · {age} min old")
+    if total > AGING_ALERT_SAMPLE:
+        lines.append(f"... and {total - AGING_ALERT_SAMPLE} more")
+    lines.append("")
+    lines.append("Work the queue with /pending 📋")
+    return "\n".join(lines)
+
+
+async def maybe_send_aging_alert(settings: Settings, bot: Bot) -> bool:
+    """Ping admins when deals sit pending too long. Throttled in bot_state."""
+    cutoff = utcnow() - timedelta(minutes=PENDING_AGE_MINUTES)
+    async with session_scope() as session:
+        total = (
+            await session.execute(
+                select(func.count(Transaction.tx_id)).where(
+                    Transaction.status == "pending", Transaction.created_at < cutoff
+                )
+            )
+        ).scalar_one()
+        if not total:
+            return False
+        state = await get_bot_state(session)
+        if throttled(state, _AGING_STATE_KEY, AGING_ALERT_INTERVAL_SECONDS):
+            return False
+        rows = (
+            await session.execute(
+                select(Transaction)
+                .where(Transaction.status == "pending", Transaction.created_at < cutoff)
+                .order_by(Transaction.created_at)
+                .limit(AGING_ALERT_SAMPLE)
+            )
+        ).scalars().all()
+        await set_bot_state_keys(session, {_AGING_STATE_KEY: utcnow().isoformat()})
+
+    text = aging_alert_text(rows, total, PENDING_AGE_MINUTES)
+    for chat_id in admin_chat_destinations(settings):
+        try:
+            await bot.send_message(chat_id, text)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            continue
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -276,4 +344,11 @@ async def sweep_pending(settings: Settings, bot: Bot, max_txs: int = SWEEP_MAX_T
                 checked += 1
         except Exception:  # sweep must never break update handling
             logger.warning("Sweep check timed out/failed for TX %s", tx_id)
+
+    # Aging-queue escalation rides along with the sweep cadence (throttled
+    # in bot_state) so both serverless webhooks and polling loops ping admins.
+    try:
+        await maybe_send_aging_alert(settings, bot)
+    except Exception:
+        logger.warning("aging-queue alert failed", exc_info=True)
     return checked

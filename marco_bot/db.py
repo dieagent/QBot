@@ -75,10 +75,14 @@ _TABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("verified_amount", "NUMERIC(24, 8)"),
         ("verify_detail", "TEXT"),
         ("payout_reference", "TEXT"),
+        ("rating", "INTEGER"),
     ],
     "users": [
         ("referred_by", "BIGINT"),
         ("lang", "VARCHAR(5)"),
+    ],
+    "global_stats": [
+        ("bot_state", "TEXT"),
     ],
 }
 
