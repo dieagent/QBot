@@ -319,7 +319,7 @@ async def handle_tx_submission(message: Message, user: User, text: str) -> None:
             await review.notify_admin_review(message.bot, settings(), user, manual_tx)
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.MANUAL_HASH_SUBMITTED, reply_markup=kb.persistent_menu(user))
             return
-        tx_hash = chainverify.normalize_tx_hash(text, chain or "")
+        tx_hash = chainverify.canonical_tx_id(text, chain or "")
         if not tx_hash:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.TX_HASH_INVALID)
             return
