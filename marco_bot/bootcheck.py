@@ -28,6 +28,7 @@ _BOOT_STATE_KEY = "last_boot_alert_at"
 # Every (token, chain) the deposit UI offers — mirrors keyboards.express_chains.
 DEPOSIT_COMBOS: list[tuple[str, str]] = [
     *[("USDT", chain) for chain in c.EXPRESS_USDT_CHAINS],
+    *[("USDC", chain) for chain in c.USDC_EVM_CHAINS],
     *[("BTC", chain) for chain in c.BTC_CHAINS],
     *[("ETH", chain) for chain in ["BEP20", "ERC20", "MATIC", "TRC20"]],
     ("SOL", "SOL"),

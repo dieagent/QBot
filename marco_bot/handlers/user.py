@@ -17,6 +17,7 @@ from .. import animation, chainverify
 from .. import constants as c
 from .. import keyboards as kb
 from .. import messages as msg
+from .. import prices
 from .. import review
 from .. import states
 from ..translations import lang_of
@@ -36,6 +37,7 @@ from ..services import (
     clear_flow,
     delete_active_menu_message,
     deposit_address,
+    get_bot_state,
     format_remaining,
     get_or_create_session,
     get_or_create_user,
@@ -471,6 +473,10 @@ async def callbacks(callback: CallbackQuery) -> None:
     elif data == "ad:publish":
         await publish_ad(callback, user)
     elif data == "express:sell":
+        held = await _maintenance_note(callback)
+        if held:
+            await callback.answer(held[:200], show_alert=True)
+            return
         await show_payment_modes(callback, user)
     elif data == "express:saved_methods":
         await callback.answer("Saved Payment Methods are not configured yet.", show_alert=True)
@@ -488,8 +494,16 @@ async def callbacks(callback: CallbackQuery) -> None:
         await animation.animate_action(callback, "Opening wallet", enabled=settings().ui_animations)
         await open_wallet(callback.message, user)
     elif data == "wallet:add":
+        held = await _maintenance_note(callback)
+        if held:
+            await callback.answer(held[:200], show_alert=True)
+            return
         await wallet_add(callback, user)
     elif data == "wallet:withdraw":
+        held = await _maintenance_note(callback)
+        if held:
+            await callback.answer(held[:200], show_alert=True)
+            return
         await wallet_withdraw(callback, user)
     elif data.startswith("wallet:token:"):
         await set_wallet_token(callback, user, data.rsplit(":", 1)[1])
@@ -964,7 +978,25 @@ async def set_express_chain(callback: CallbackQuery, user: User, chain: str) -> 
         address = deposit_address(settings(), token, chain)
         await transition(session, user.user_id, states.EXPRESS_DEPOSIT_ADDRESS, {"chain": chain, "deposit_address": address}, push=True)
         await animation.animate_action(callback, "Generating deposit address", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(4, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(token, chain, address, lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(4, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(token, chain, address, lang_of(user), crypto_hint=await _deposit_hint(token, data)), reply_markup=kb.check_payment(), parse_mode="HTML")
+
+
+async def _deposit_hint(token: str, data: dict) -> str | None:
+    """Live 'send ~= 0.0048 BTC' helper for volatile deposit coins."""
+    try:
+        usd = Decimal(str(data.get("amount_usd", "0") or "0"))
+    except Exception:
+        usd = None
+    return await prices.crypto_hint(token, usd)
+
+
+async def _maintenance_note(callback: CallbackQuery) -> str | None:
+    """User-facing hold text while maintenance mode is ON, else None."""
+    from .admin import maintenance_block
+
+    async with session_scope() as session:
+        state = await get_bot_state(session)
+    return maintenance_block(state, utcnow())
 
 
 async def request_screenshot(callback: CallbackQuery, user: User) -> None:
@@ -1044,7 +1076,7 @@ async def set_wallet_chain(callback: CallbackQuery, user: User, chain: str) -> N
             push=True,
         )
         await animation.animate_action(callback, "Generating deposit address", enabled=settings().ui_animations)
-        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(3, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(token, chain, address, lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.steps_header(3, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(token, chain, address, lang_of(user), crypto_hint=await _deposit_hint(token, data)), reply_markup=kb.check_payment(), parse_mode="HTML")
 
 
 async def wallet_withdraw(callback: CallbackQuery, user: User) -> None:
@@ -1259,7 +1291,7 @@ async def render_state(message: Message, user: User, state: str) -> None:
             token = data.get("token", "USDT")
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(3, lang=lang_of(user)) + "\n\n" + msg.express_chain_select(token), reply_markup=kb.express_chains(token, "express"))
         elif state == states.EXPRESS_DEPOSIT_ADDRESS:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(4, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", ""), lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(4, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", ""), lang_of(user), crypto_hint=await _deposit_hint(data.get("token", "USDT"), data)), reply_markup=kb.check_payment(), parse_mode="HTML")
         elif state == states.WALLET_MENU:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.wallet(user.wallet_balance, lang_of(user)), reply_markup=kb.wallet_menu())
         elif state == states.WALLET_ADD_AMOUNT:
@@ -1270,7 +1302,7 @@ async def render_state(message: Message, user: User, state: str) -> None:
             token = data.get("token", "USDT")
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(2, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.express_chain_select(token), reply_markup=kb.express_chains(token, "wallet"))
         elif state == states.WALLET_DEPOSIT_ADDRESS:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(3, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", ""), lang_of(user)), reply_markup=kb.check_payment(), parse_mode="HTML")
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.steps_header(3, wallet_flow=True, lang=lang_of(user)) + "\n\n" + msg.deposit_instructions(data.get("token", "USDT"), data.get("chain", "BEP20"), data.get("deposit_address", ""), lang_of(user), crypto_hint=await _deposit_hint(data.get("token", "USDT"), data)), reply_markup=kb.check_payment(), parse_mode="HTML")
         elif state == states.WALLET_WITHDRAW_AMOUNT:
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.WITHDRAW_AMOUNT, reply_markup=kb.back())
         elif state == states.WALLET_WITHDRAW_DEST:

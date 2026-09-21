@@ -279,7 +279,7 @@ def express_chain_select(token: str) -> str:
     return f"🔗 Select Chain for 🤑 {token}:"
 
 
-def deposit_instructions(token: str, chain: str, address: str, lang: str | None = None) -> str:
+def deposit_instructions(token: str, chain: str, address: str, lang: str | None = None, crypto_hint: str | None = None) -> str:
     default = f"""🤑 Token: {escape(token)}
 🔗 Network: {escape(chain)}
 
@@ -292,6 +292,8 @@ After payment, ➡️ click 'CHECK PAYMENT' below to send proof 👁"""
     text = tr("DEPOSIT_INSTRUCTIONS", lang, default)
     if lang == "hi":
         text = text.replace("{token}", escape(token)).replace("{chain}", escape(chain)).replace("{address}", escape(address))
+    if crypto_hint:
+        text += f"\n\n💡 Send {escape(crypto_hint)} at the current live price."
     return text
 
 

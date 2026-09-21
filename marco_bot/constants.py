@@ -44,3 +44,6 @@ DEFAULT_RATE_TIERS = {
     "IMPS": [(10, 600, 94.0), (601, 2000, 95.0), (2001, 5000, 96.0), (5001, None, 97.0)],
     "CDM": [(10, 600, 94.0), (601, 2000, 95.0), (2001, 5000, 96.0), (5001, None, 97.0)],
 }
+
+# USDC only rides the EVM rails — every address there equals the ETH one.
+USDC_EVM_CHAINS = ["ERC20", "BEP20", "MATIC", "BASE"]

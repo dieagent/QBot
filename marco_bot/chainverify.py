@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -325,22 +325,42 @@ async def _verify(settings, token, chain, deposit_address, expected_usd, tx_hash
     family = chain_family(chain)
     try:
         if family == "evm":
-            return await _verify_evm(settings, token, chain, deposit_address, expected_usd, tx_hash, fetch)
-        if family == "tron":
-            return await _verify_tron(settings, token, deposit_address, expected_usd, tx_hash, fetch)
-        if family == "btc":
-            return await _verify_btc(deposit_address, tx_hash, fetch)
-        if family == "sol":
-            return await _verify_sol(settings, deposit_address, tx_hash, fetch)
-        if family == "ton":
-            return await _verify_ton(settings, deposit_address, tx_hash, fetch)
-        if family == "ltc":
-            return await _verify_ltc(deposit_address, tx_hash, fetch)
+            result = await _verify_evm(settings, token, chain, deposit_address, expected_usd, tx_hash, fetch)
+        elif family == "tron":
+            result = await _verify_tron(settings, token, deposit_address, expected_usd, tx_hash, fetch)
+        elif family == "btc":
+            result = await _verify_btc(deposit_address, tx_hash, fetch)
+        elif family == "sol":
+            result = await _verify_sol(settings, deposit_address, tx_hash, fetch)
+        elif family == "ton":
+            result = await _verify_ton(settings, deposit_address, tx_hash, fetch)
+        elif family == "ltc":
+            result = await _verify_ltc(deposit_address, tx_hash, fetch)
+        else:
+            return VerificationResult(status=STATUS_UNSUPPORTED, detail=f"unsupported network: {chain}")
+        return await _with_usd_estimate(token, result, fetch)
     except ProvidersUnavailable as exc:
         return VerificationResult(status=STATUS_PENDING, detail=f"verification services unavailable: {exc}")
     except (aiohttp.ClientError, ValueError, KeyError, TypeError, OSError, asyncio.TimeoutError) as exc:
         return VerificationResult(status=STATUS_PENDING, detail=f"verification service error: {exc}")
-    return VerificationResult(status=STATUS_UNSUPPORTED, detail=f"unsupported network: {chain}")
+
+
+async def _with_usd_estimate(token: str, result: VerificationResult, fetch=None) -> VerificationResult:
+    """Stamp a live USD conversion onto verified volatile transfers.
+
+    Admins approve volatile deals by dollar value, so the on-chain coin
+    amount alone is half the story — we append the live CoinGecko estimate
+    ('≈ $499.21 at current price') straight into the verification detail.
+    Any price-fetch wobble leaves the result untouched.
+    """
+    if result.status != STATUS_VERIFIED or result.amount is None:
+        return result
+    from . import prices
+
+    hint = await prices.usd_hint(token, result.amount, fetch)
+    if hint:
+        return replace(result, detail=f"{result.detail} ({hint} at current price)")
+    return result
 
 
 # --------------------------------------------------------------------------- EVM

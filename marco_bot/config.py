@@ -50,6 +50,10 @@ class Settings:
     webhook_secret: str | None = None
     # Menu loading animations (UI_ANIMATIONS=off disables).
     ui_animations: bool = True
+    # Admin-queue prioritisation: deals at/above this USD value get a PRIORITY banner.
+    priority_usd: Decimal = Decimal("1000")
+    # Optional: deals >= this USD value need TWO different admins to approve.
+    dual_approval_usd: Decimal | None = None
     # USD credited to a referrer when a referred user completes their first
     # approved SAFE SELL (0 = referral tracking only).
     referral_bonus_usd: Decimal = Decimal("0")
@@ -116,6 +120,28 @@ def _optional_int_env(name: str) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _decimal_env(name: str, default: Decimal) -> Decimal:
+    value = _optional_env(name)
+    if value is None:
+        return default
+    try:
+        parsed = Decimal(value)
+    except Exception:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _optional_decimal_env(name: str) -> Decimal | None:
+    value = _optional_env(name)
+    if value is None:
+        return None
+    try:
+        parsed = Decimal(value)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -195,6 +221,8 @@ def load_settings() -> Settings:
         infura_api_key=_optional_env("INFURA_API_KEY"),
         trongrid_api_key=_optional_env("TRONGRID_API_KEY"),
         verify_min_confirmations=_optional_int_env("VERIFY_MIN_CONFIRMATIONS"),
+        priority_usd=_decimal_env("PRIORITY_USD", Decimal("1000")),
+        dual_approval_usd=_optional_decimal_env("DUAL_APPROVAL_USD"),
         webhook_url=_optional_env("WEBHOOK_URL"),
         webhook_secret=_optional_env("WEBHOOK_SECRET"),
         ui_animations=_bool_env("UI_ANIMATIONS", True),

@@ -86,10 +86,18 @@ def verification_block(tx: Transaction) -> str:
     return block
 
 
-def admin_review_text(user: User, tx: Transaction) -> str:
+def priority_banner(settings: Settings, tx: Transaction) -> str:
+    """A loud header when a deal crosses the PRIORITY_USD threshold."""
+    if settings.priority_usd and tx.amount_usd is not None and Decimal(str(tx.amount_usd)) >= settings.priority_usd:
+        return f"🔥🔥 PRIORITY DEAL — ${tx.amount_usd:.2f} (≥ ${settings.priority_usd:.0f}) 🔥🔥\n\n"
+    return ""
+
+
+def admin_review_text(user: User, tx: Transaction, settings: Settings | None = None) -> str:
+    banner = priority_banner(settings, tx) if settings else ""
     username = f"@{user.username}" if user.username else str(user.user_id)
     if tx.type == "withdrawal":
-        return f"""🧾 Pending Withdrawal
+        return banner + f"""🧾 Pending Withdrawal
 
 TX: {tx.tx_id}
 User: {username}
@@ -98,7 +106,8 @@ Amount: ${tx.amount_usd:.2f}
 Destination:
 {tx.withdrawal_destination}"""
     return (
-        f"""🧾 Pending Verification
+        banner
+        + f"""🧾 Pending Verification
 
 TX: {tx.tx_id}
 Type: {tx.type}
@@ -116,7 +125,7 @@ Deposit Address:
 
 
 async def notify_admin_review(bot: Bot, settings: Settings, user: User, tx: Transaction) -> None:
-    caption = admin_review_text(user, tx)
+    caption = admin_review_text(user, tx, settings)
     destinations: list[int | str] = []
     if settings.admin_review_chat_id:
         destinations.append(settings.admin_review_chat_id)
