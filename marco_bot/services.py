@@ -612,3 +612,22 @@ def public_username(user: User) -> str:
 
 def telegram_username(tg_user: TelegramUser) -> str:
     return tg_user.username or str(tg_user.id)
+
+
+def referral_qr_png(link: str) -> bytes | None:
+    """Branded QR flyer (PNG bytes) for a referral link, or None if the
+    qrcode stack isn't available. Import is lazy so the rest of the bot
+    never depends on it."""
+    try:
+        import io
+
+        import qrcode
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        img = qrcode.make(link, box_size=10, border=4)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
