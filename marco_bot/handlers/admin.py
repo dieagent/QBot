@@ -76,6 +76,97 @@ def normalize_reference(text: str) -> str | None:
         return None
     return ref
 
+
+# ---------------------------------------------------------------------------
+# Support-reply prompt + rate wizard state machines (10-minute admin windows)
+# ---------------------------------------------------------------------------
+
+SUPPORT_REPLY_MINUTES = 10
+
+
+def support_reply_key(admin_id: int) -> str:
+    return f"support_reply:{admin_id}"
+
+
+def new_support_reply(user_id: int, now: datetime) -> str:
+    return json.dumps({"user_id": user_id, "until": (now + timedelta(minutes=SUPPORT_REPLY_MINUTES)).isoformat()})
+
+
+def parse_support_reply(raw: object, now: datetime) -> int | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    try:
+        until = datetime.fromisoformat(str(data.get("until", "")))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if now >= until:
+        return None
+    user_id = data.get("user_id")
+    return user_id if isinstance(user_id, int) else None
+
+
+RATEWIZ_MINUTES = 5
+RATE_WIZARD_STEPS = ("min", "max", "rate")
+
+
+def ratewiz_key(admin_id: int) -> str:
+    return f"ratewiz:{admin_id}"
+
+
+def new_ratewiz(mode: str, now: datetime) -> str:
+    return json.dumps({"mode": mode.upper(), "step": "min", "values": {}, "until": (now + timedelta(minutes=RATEWIZ_MINUTES)).isoformat()})
+
+
+def parse_ratewiz(raw: object, now: datetime) -> dict | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    try:
+        until = datetime.fromisoformat(str(data.get("until", "")))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if now >= until or data.get("step") not in RATE_WIZARD_STEPS or not isinstance(data.get("mode"), str):
+        return None
+    if not isinstance(data.get("values"), dict):
+        data["values"] = {}
+    return data
+
+
+def ratewiz_next_step(step: str) -> str | None:
+    idx = RATE_WIZARD_STEPS.index(step) + 1
+    return RATE_WIZARD_STEPS[idx] if idx < len(RATE_WIZARD_STEPS) else None
+
+
+RATEWIZ_PROMPTS = {
+    "min": "Minimum $ of the tier? (plain number)",
+    "max": "Maximum $ of the tier? (number, or + / 'none' for open-ended)",
+    "rate": "INR rate for this tier? (₹ per $1)",
+}
+
+
+async def _save_rate_tier(session, payment_mode: str, min_usd: Decimal, max_usd: Decimal | None, rate: Decimal) -> None:
+    """Shared upsert used by /setrate and the rate wizard."""
+    result = await session.execute(
+        select(RateTier).where(
+            RateTier.payment_mode == payment_mode,
+            RateTier.min_usd == min_usd,
+            RateTier.max_usd == max_usd,
+        )
+    )
+    tier = result.scalar_one_or_none()
+    if not tier:
+        tier = RateTier(payment_mode=payment_mode, min_usd=min_usd, max_usd=max_usd, rate_inr=rate)
+        session.add(tier)
+    else:
+        tier.rate_inr = rate
+
 router = Router()
 _settings: Settings | None = None
 
@@ -256,7 +347,7 @@ async def _deliver_payout_receipt(bot, tx_id: int, reference: str) -> tuple[bool
                     user.user_id,
                     msg.payout_receipt_render(tx, lang_of(user)),
                     parse_mode=ParseMode.HTML,
-                    reply_markup=kb.rating_buttons(tx.tx_id),
+                    reply_markup=kb.receipt_actions(tx.tx_id),
                 )
                 delivered = True
             except (TelegramBadRequest, TelegramForbiddenError):
@@ -387,20 +478,38 @@ async def set_rate(message: Message) -> None:
         await message.answer("Invalid numeric rate tier.")
         return
     async with session_scope() as session:
-        result = await session.execute(
-            select(RateTier).where(
-                RateTier.payment_mode == payment_mode,
-                RateTier.min_usd == min_usd,
-                RateTier.max_usd == max_usd,
-            )
-        )
-        tier = result.scalar_one_or_none()
-        if not tier:
-            tier = RateTier(payment_mode=payment_mode, min_usd=min_usd, max_usd=max_usd, rate_inr=rate)
-            session.add(tier)
-        else:
-            tier.rate_inr = rate
-        await message.answer(f"Saved {payment_mode} tier at {rate:.1f}₹.")
+        await _save_rate_tier(session, payment_mode, min_usd, max_usd, rate)
+    await message.answer(f"Saved {payment_mode} tier at {rate:.1f}₹.")
+
+
+@router.message(Command("rates"))
+async def rate_wizard_start(message: Message) -> None:
+    """Interactive rate editor — tap a payment mode, then answer 3 questions."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    async with session_scope() as session:
+        tiers = (
+            await session.execute(select(RateTier).order_by(RateTier.payment_mode, RateTier.min_usd))
+        ).scalars().all()
+    lines = ["🪄 Rate Wizard — current tiers (tap a mode below to edit):"]
+    for tier in tiers:
+        span = f"${float(tier.min_usd):.0f}–{('+' if tier.max_usd is None else f'${float(tier.max_usd):.0f}')}"
+        lines.append(f"• {tier.payment_mode}: {span} → {float(tier.rate_inr):.1f}₹")
+    if len(lines) == 1:
+        lines.append("(no tiers set yet — the wizard will create one)")
+    await message.answer("\n".join(lines), reply_markup=kb.rate_wizard_modes(sorted({t.payment_mode for t in tiers}) or ["UPI", "IMPS", "CDM"]))
+
+
+@router.callback_query(F.data.startswith("ratewiz:"))
+async def rate_wizard_begin(callback: CallbackQuery) -> None:
+    if not callback.from_user or not is_admin(callback.from_user.id):
+        await callback.answer("Not authorized.", show_alert=True)
+        return
+    mode = callback.data.split(":", 1)[1].upper()
+    async with session_scope() as session:
+        await set_bot_state_keys(session, {ratewiz_key(callback.from_user.id): new_ratewiz(mode, utcnow())})
+    await callback.answer()
+    await callback.message.answer(f"✏️ Editing {mode} — {RATEWIZ_PROMPTS['min']}\n(5-min window; type anything else or wait to cancel)")
 
 
 @router.message(Command("broadcast"))
@@ -797,27 +906,104 @@ async def admin_receipt_reply(message: Message) -> None:
     if not text or text.startswith("/"):
         return
 
-    key = pending_receipt_key(message.from_user.id)
-    parsed: int | None = None
+    made_changes = None
     async with session_scope() as session:
         state = await get_bot_state(session)
-        parsed = parse_pending_receipt(state.get(key), utcnow())
-        if parsed is None:
-            return
-        if is_skip(text):
-            await set_bot_state_keys(session, {key: ""})
-            await message.answer("👍 Skipped — attach later with /receipt TX_ID <ref> if needed.")
-            return
-        reference = normalize_reference(text)
-        if not reference:
-            await message.answer("That doesn't look like a reference — send the plain UPI UTR / reference text (up to 64 chars), or 'skip'.")
-            return
-        await set_bot_state_keys(session, {key: ""})
+        now = utcnow()
 
-    ok, note = await _deliver_payout_receipt(message.bot, parsed, reference)
-    if ok and not note:
-        await message.answer(f"✅ Receipt for TX {parsed} delivered (ref: {reference}) — rating card sent along ⭐")
-    elif ok:
-        await message.answer(f"⚠️ {note.capitalize()}.")
-    else:
-        await message.answer(f"⚠️ {note}")
+        # 1) Receipt prompt (auto receipt after approve)
+        key = pending_receipt_key(message.from_user.id)
+        parsed = parse_pending_receipt(state.get(key), now)
+        if parsed is not None:
+            if is_skip(text):
+                await set_bot_state_keys(session, {key: ""})
+                await message.answer("👍 Skipped — attach later with /receipt TX_ID <ref> if needed.")
+                return
+            reference = normalize_reference(text)
+            if not reference:
+                await message.answer("That doesn't look like a reference — send the plain UPI UTR / reference text (up to 64 chars), or 'skip'.")
+                return
+            await set_bot_state_keys(session, {key: ""})
+            made_changes = ("receipt", parsed, reference)
+
+        # 2) Support reply prompt
+        elif parse_support_reply(state.get(support_reply_key(message.from_user.id)), now) is not None:
+            target = parse_support_reply(state.get(support_reply_key(message.from_user.id)), now)
+            await set_bot_state_keys(session, {support_reply_key(message.from_user.id): ""})
+            made_changes = ("support", target, text)
+
+        # 3) Rate wizard steps
+        else:
+            wiz = parse_ratewiz(state.get(ratewiz_key(message.from_user.id)), now)
+            if wiz is not None:
+                made_changes = ("ratewiz", wiz, text)
+
+    if made_changes is None:
+        return
+    kind, a, b = made_changes
+
+    if kind == "receipt":
+        ok, note = await _deliver_payout_receipt(message.bot, a, b)
+        if ok and not note:
+            await message.answer(f"✅ Receipt for TX {a} delivered (ref: {b}) — rating card sent along ⭐")
+        elif ok:
+            await message.answer(f"⚠️ {note.capitalize()}.")
+        else:
+            await message.answer(f"⚠️ {note}")
+        return
+
+    if kind == "support":
+        if b.lower() == "cancel":
+            await message.answer("👍 Reply cancelled.")
+            return
+        try:
+            await message.bot.send_message(a, f"💬 <b>Support reply:</b>\n\n{b}", parse_mode=ParseMode.HTML)
+            await message.answer(f"✅ Delivered to {a}.")
+        except (TelegramBadRequest, TelegramForbiddenError):
+            await message.answer(f"⚠️ Couldn't reach user {a} (bot blocked?).")
+        return
+
+    # kind == "ratewiz": a=dict(wizard), b=text
+    wiz, step, mode, values = a, a["step"], a["mode"], a["values"]
+    if b.lower() == "cancel":
+        async with session_scope() as session:
+            await set_bot_state_keys(session, {ratewiz_key(message.from_user.id): ""})
+        await message.answer("👍 Rate wizard cancelled — nothing changed.")
+        return
+    nxt: str | None = None
+    if step == "min":
+        min_usd = parse_decimal(b)
+        if not min_usd or min_usd <= 0:
+            await message.answer("❌ Send a positive number for the minimum. (Type 'cancel' to stop.)")
+            return
+        values["min"] = float(min_usd)
+        nxt = ratewiz_next_step(step)
+    elif step == "max":
+        max_usd = parse_decimal(b) if b != "+" else None
+        if b != "+" and (max_usd is None or max_usd <= Decimal(str(values.get("min", 0)))):
+            await message.answer("❌ Send a max > min, or + / 'none' for no cap. ('cancel' to stop.)")
+            return
+        values["max"] = float(max_usd) if max_usd is not None else None
+        nxt = ratewiz_next_step(step)
+    else:  # step == "rate" — last step, save
+        rate = parse_decimal(b)
+        if not rate or rate <= 0:
+            await message.answer("❌ Send a positive INR rate. ('cancel' to stop.)")
+            return
+        async with session_scope() as session:
+            await _save_rate_tier(
+                session, mode,
+                Decimal(str(values["min"])),
+                Decimal(str(values["max"])) if values.get("max") is not None else None,
+                rate,
+            )
+            await set_bot_state_keys(session, {ratewiz_key(message.from_user.id): ""})
+        span = f"${values['min']:.0f}" + ("–+" if values.get("max") is None else f"–${values['max']:.0f}")
+        await message.answer(f"✅ {mode}: {span} → {rate:.1f}₹ saved!")
+        return
+
+    if nxt:
+        payload = {"mode": mode, "step": nxt, "values": values, "until": (utcnow() + timedelta(minutes=RATEWIZ_MINUTES)).isoformat()}
+        async with session_scope() as session:
+            await set_bot_state_keys(session, {ratewiz_key(message.from_user.id): json.dumps(payload)})
+        await message.answer(RATEWIZ_PROMPTS[nxt])

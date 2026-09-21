@@ -247,6 +247,23 @@ Useful settings:
 - **Channel marketing drip** — the cron pass also posts to your ads channel:
   a "✅ N deals · $X safe-sold" trust feed every ~3h and a daily rates
   broadcast built from your `RateTier` table.
+- **In-bot support** — the 💬 SUPPORT menu button collects a one-shot
+  question from the user and posts it to the admin chat with a ✉️ Reply
+  button; the admin's next message goes straight back to the user as a bot
+  DM (30-min per-user cooldown, 10-min reply window).
+- **Dispute button** — payout receipts now carry "🆘 Something wrong?";
+  tapping it escalates the exact deal (id, proof, verification details) to
+  the admin chat with an inline reply button, and the user gets a polite
+  "we're on it" ack. Each receipt can be flagged once.
+- **QR referral flyers** — `/refer` also sends a branded QR card image
+  (works even if the `qrcode` stack is missing — then the text link still
+  goes out).
+- **Rate wizard** — `/rates` shows current tiers with per-mode edit
+  buttons; then the bot walks the admin through min → max → rate in chat
+  (`cancel` stops; `/setrate` still works as the raw command).
+- **Saved payout details** — after a first withdrawal the bot remembers the
+  payout destination and offers "💳 Use saved details / ✏️ Enter new" next
+  time.
 
 Useful settings:
 

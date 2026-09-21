@@ -18,7 +18,7 @@ def persistent_menu(user: User | None = None) -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=post_label), KeyboardButton(text=c.SAFE_SELL_BUTTON)],
             [KeyboardButton(text=c.WALLET_BUTTON), KeyboardButton(text=c.MY_STATS_BUTTON)],
-            [KeyboardButton(text=c.GLOBAL_STATS_BUTTON)],
+            [KeyboardButton(text=c.GLOBAL_STATS_BUTTON), KeyboardButton(text=c.SUPPORT_BUTTON)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -294,3 +294,33 @@ def admin_review(tx_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def receipt_actions(tx_id: int) -> InlineKeyboardMarkup:
+    """Rating stars + a dispute entry point, shown on payout receipts."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⭐" * stars, callback_data=f"rate:{tx_id}:{stars}") for stars in range(1, 6)],
+            [InlineKeyboardButton(text="🆘 Something wrong?", callback_data=f"dispute:{tx_id}")],
+        ]
+    )
+
+
+def support_reply(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✉️ Reply to user", callback_data=f"support:{user_id}")]]
+    )
+
+
+def withdraw_saved_choice() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Use saved payout details", callback_data="withdraw:use_saved")],
+            [InlineKeyboardButton(text="✏️ Enter new details", callback_data="withdraw:new")],
+        ]
+    )
+
+
+def rate_wizard_modes(modes: list[str]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"✏️ {m}", callback_data=f"ratewiz:{m}")] for m in modes]
+    return InlineKeyboardMarkup(inline_keyboard=rows)

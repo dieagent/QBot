@@ -9,6 +9,7 @@ from decimal import Decimal
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.enums import ParseMode
+from aiogram.types import BufferedInputFile
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, select
@@ -33,11 +34,14 @@ from ..services import (
     platform_rating_line,
     parse_referral_payload,
     referral_link,
+    referral_qr_png,
     captcha_file,
     clear_flow,
     delete_active_menu_message,
     deposit_address,
+    bot_state_timestamp,
     get_bot_state,
+    set_bot_state_keys,
     format_remaining,
     get_or_create_session,
     get_or_create_user,
@@ -205,6 +209,16 @@ Friends who join from it are linked to you forever.
 Referrals so far: {total}{reward_line}""",
             parse_mode="HTML",
         )
+        qr = referral_qr_png(link)
+        if qr:
+            try:
+                await message.bot.send_photo(
+                    message.chat.id,
+                    photo=BufferedInputFile(qr, filename="invite-qr.png"),
+                    caption="📲 Your QR flyer — share it anywhere a link would look spammy!",
+                )
+            except (TelegramBadRequest, TelegramForbiddenError):
+                pass
 
 
 @router.message(Command("cancel"))
@@ -386,6 +400,10 @@ async def text_message(message: Message) -> None:
         await show_my_stats(message, user)
         await delete_user_message(message)
         return
+    if text == c.SUPPORT_BUTTON:
+        await enter_support(message, user)
+        await delete_user_message(message)
+        return
 
     if state == states.CAPTCHA:
         await handle_captcha_answer(message, user, text)
@@ -403,6 +421,8 @@ async def text_message(message: Message) -> None:
         await handle_withdraw_destination(message, user, text)
     elif state in {states.EXPRESS_AWAITING_SCREENSHOT, states.WALLET_AWAITING_SCREENSHOT}:
         await handle_tx_submission(message, user, text)
+    elif state == states.AWAITING_SUPPORT_MESSAGE:
+        await handle_support_message(message, user, text)
     else:
         await send_welcome(message, user)
 
@@ -472,6 +492,18 @@ async def callbacks(callback: CallbackQuery) -> None:
         await revise_ad(callback, user)
     elif data == "ad:publish":
         await publish_ad(callback, user)
+    elif data.startswith("dispute:"):
+        await file_dispute(callback, user, data.split(":")[1])
+        return
+    elif data.startswith("support:"):
+        await start_support_reply(callback, data.split(":")[1])
+        return
+    elif data == "withdraw:use_saved":
+        await withdraw_use_saved(callback, user)
+        return
+    elif data == "withdraw:new":
+        await withdraw_new_details(callback, user)
+        return
     elif data == "express:sell":
         held = await _maintenance_note(callback)
         if held:
@@ -1097,7 +1129,16 @@ async def handle_withdraw_amount(message: Message, user: User, text: str) -> Non
             await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, f"Enter an amount up to your available balance: ${user.wallet_balance:.2f}", reply_markup=kb.back())
             return
         await transition(session, user.user_id, states.WALLET_WITHDRAW_DEST, {"withdraw_amount": str(amount)}, push=True)
-        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.WITHDRAW_DESTINATION, reply_markup=kb.back())
+        saved = (await get_bot_state(session)).get(f"payout:{user.user_id}")
+        if isinstance(saved, str) and saved.strip():
+            await send_tracked_menu_message(
+                session, message.bot, user.user_id, message.chat.id,
+                f"💳 Your saved payout details:\n<blockquote>{saved}</blockquote>\nSend now to these, or enter new ones? 👇",
+                reply_markup=kb.withdraw_saved_choice(),
+                parse_mode="HTML",
+            )
+        else:
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.WITHDRAW_DESTINATION, reply_markup=kb.back())
 
 
 async def handle_withdraw_destination(message: Message, user: User, text: str) -> None:
@@ -1121,9 +1162,152 @@ async def handle_withdraw_destination(message: Message, user: User, text: str) -
         session.add(tx)
         user.is_locked = True
         await clear_flow(session, user.user_id)
+        if text and len(text) <= 300:
+            await set_bot_state_keys(session, {f"payout:{user.user_id}": text})
         await session.flush()
         await review.notify_admin_review(message.bot, settings(), user, tx)
         await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.withdraw_queued(tx.tx_id), reply_markup=kb.persistent_menu(user))
+
+
+
+
+# ---------------------------------------------------------------------------
+# In-bot support, disputes, saved payout details (Wave 2)
+# ---------------------------------------------------------------------------
+
+
+async def enter_support(message: Message, user: User) -> None:
+    async with session_scope() as session:
+        state = await get_bot_state(session)
+        last = bot_state_timestamp(state, f"support_at:{user.user_id}")
+        cooldown = timedelta(seconds=c.SUPPORT_COOLDOWN_SECONDS)
+        if last and utcnow() - last < cooldown:
+            remaining = cooldown - (utcnow() - last)
+            mins = int(remaining.total_seconds() // 60) + 1
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, f"💬 Your last support message is still being handled — please retry in ~{mins} min.", reply_markup=kb.persistent_menu(user))
+            return
+        await transition(session, user.user_id, states.AWAITING_SUPPORT_MESSAGE, {}, push=True)
+        await send_tracked_menu_message(
+            session, message.bot, user.user_id, message.chat.id,
+            "💬 Support\n\nDescribe your question or problem in ONE message — our team will reply right here in this chat.\n\n(Type /cancel to go back.)",
+            reply_markup=kb.back(),
+        )
+
+
+async def handle_support_message(message: Message, user: User, text: str) -> None:
+    if len(text) > 2000:
+        await message.answer("Please keep it under 2000 characters.")
+        return
+    async with session_scope() as session:
+        await clear_flow(session, user.user_id)
+        await set_bot_state_keys(session, {f"support_at:{user.user_id}": utcnow().isoformat()})
+        username = f"@{user.username}" if user.username else str(user.user_id)
+        admin_text = (
+            f"🆘 SUPPORT — {username} (id {user.user_id})\n\n"
+            f"<blockquote>{text}</blockquote>\n\n"
+            f"Tap the button below, then send your reply as a normal message — I'll deliver it."
+        )
+        bot = message.bot
+        for chat_id in review.admin_chat_destinations(settings()):
+            try:
+                await bot.send_message(chat_id, admin_text, reply_markup=kb.support_reply(user.user_id), parse_mode=ParseMode.HTML)
+            except (TelegramBadRequest, TelegramForbiddenError):
+                continue
+        await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, "✅ Message sent to support — replies will arrive right here. Usually within a few hours 🙏", reply_markup=kb.persistent_menu(user))
+
+
+async def file_dispute(callback: CallbackQuery, user: User, tx_raw: str) -> None:
+    if not tx_raw.isdigit():
+        await callback.answer()
+        return
+    tx_id = int(tx_raw)
+    async with session_scope() as session:
+        tx = await session.get(Transaction, tx_id)
+        if not tx or tx.user_id != user.user_id:
+            await callback.answer("This isn't your receipt.", show_alert=True)
+            return
+        key = f"dispute:{tx_id}"
+        state = await get_bot_state(session)
+        if state.get(key):
+            await callback.answer("Already flagged — an admin is on it. 👍", show_alert=True)
+            return
+        await set_bot_state_keys(session, {key: utcnow().isoformat()})
+        bot = callback.message.bot
+        from ..review import admin_review_text
+        for chat_id in review.admin_chat_destinations(settings()):
+            try:
+                await bot.send_message(
+                    chat_id,
+                    f"⚠️ DISPUTE FLAGGED\n\n" + admin_review_text(user, tx) + "\n\nUser tapped 'Something wrong?' on the payout receipt.",
+                    reply_markup=kb.support_reply(user.user_id),
+                )
+            except (TelegramBadRequest, TelegramForbiddenError):
+                continue
+        await callback.answer("⚠️ Flagged for review — an admin will reach out here shortly.", show_alert=True)
+
+
+async def start_support_reply(callback: CallbackQuery, user_raw: str) -> None:
+    target_id = int(user_raw) if user_raw.isdigit() else None
+    from .admin import is_admin, new_support_reply, support_reply_key
+    if not is_admin(callback.from_user.id) or target_id is None:
+        await callback.answer()
+        return
+    async with session_scope() as session:
+        await set_bot_state_keys(session, {support_reply_key(callback.from_user.id): new_support_reply(target_id, utcnow())})
+    await callback.answer()
+    try:
+        await callback.message.answer(f"✉️ Reply mode ON for user {target_id} — your next text message in this chat goes to them (10-min window). Type anything else or wait to cancel.")
+    except (TelegramBadRequest, TelegramForbiddenError):
+        pass
+
+
+async def _queue_withdrawal_from_saved(callback: CallbackQuery, user: User, destination: str) -> None:
+    async with session_scope() as session:
+        user = await session.get(User, user.user_id)
+        bot_session = await get_or_create_session(session, user.user_id)
+        data = session_data(bot_session)
+        amount = Decimal(str(data.get("withdraw_amount", "0")))
+        mg = callback.message
+        if not user or amount <= 0 or amount > user.wallet_balance:
+            await callback.answer("Withdrawal amount changed — please start again.", show_alert=True)
+            await clear_flow(session, user.user_id)
+            return
+        tx = Transaction(
+            user_id=user.user_id,
+            type="withdrawal",
+            amount_usd=amount,
+            amount_inr=Decimal("0"),
+            withdrawal_destination=destination,
+            status="pending",
+        )
+        session.add(tx)
+        user.is_locked = True
+        await clear_flow(session, user.user_id)
+        await session.flush()
+        await review.notify_admin_review(mg.bot, settings(), user, tx)
+        await callback.answer()
+        await send_tracked_menu_message(session, mg.bot, user.user_id, mg.chat.id, msg.withdraw_queued(tx.tx_id), reply_markup=kb.persistent_menu(user))
+
+
+async def withdraw_use_saved(callback: CallbackQuery, user: User) -> None:
+    async with session_scope() as session:
+        saved = (await get_bot_state(session)).get(f"payout:{user.user_id}")
+        bot_session = await get_or_create_session(session, user.user_id)
+        if bot_session.state != states.WALLET_WITHDRAW_DEST or not isinstance(saved, str) or not saved.strip():
+            await callback.answer("Nothing saved or the flow expired — please start again.", show_alert=True)
+            return
+    await _queue_withdrawal_from_saved(callback, user, saved)
+
+
+async def withdraw_new_details(callback: CallbackQuery, user: User) -> None:
+    async with session_scope() as session:
+        bot_session = await get_or_create_session(session, user.user_id)
+        if bot_session.state != states.WALLET_WITHDRAW_DEST:
+            await callback.answer("Flow expired — please start again.", show_alert=True)
+            return
+        await callback.answer()
+        await send_tracked_menu_message(session, callback.message.bot, user.user_id, callback.message.chat.id, msg.WITHDRAW_DESTINATION, reply_markup=kb.back())
+
 
 
 async def delete_callback_message(callback: CallbackQuery) -> None:

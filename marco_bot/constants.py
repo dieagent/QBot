@@ -47,3 +47,6 @@ DEFAULT_RATE_TIERS = {
 
 # USDC only rides the EVM rails — every address there equals the ETH one.
 USDC_EVM_CHAINS = ["ERC20", "BEP20", "MATIC", "BASE"]
+
+SUPPORT_BUTTON = "💬 SUPPORT"
+SUPPORT_COOLDOWN_SECONDS = 30 * 60
