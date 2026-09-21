@@ -1007,3 +1007,103 @@ async def admin_receipt_reply(message: Message) -> None:
         async with session_scope() as session:
             await set_bot_state_keys(session, {ratewiz_key(message.from_user.id): json.dumps(payload)})
         await message.answer(RATEWIZ_PROMPTS[nxt])
+
+
+# ---------------------------------------------------------------------------
+# Promo codes
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("promo"))
+async def promo_add(message: Message) -> None:
+    """/promo CODE AMOUNT [CAP] [DAYS] — e.g. /promo DIWALI 2 100 30"""
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    from ..services import new_promo, normalize_promo_code, promo_key
+
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer("Usage: /promo CODE AMOUNT_USD [CLAIM_CAP] [EXPIRES_DAYS]\nExample: /promo DIWALI 2 100 30")
+        return
+    code = normalize_promo_code(parts[1])
+    amount = parse_decimal(parts[2])
+    cap = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None
+    days = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else None
+    if not code or not amount or amount <= 0 or (len(parts) > 4 and days is None):
+        await message.answer("Invalid promo — code must be 3–24 letters/digits, amount a positive USD number.")
+        return
+    async with session_scope() as session:
+        await set_bot_state_keys(session, {promo_key(code): new_promo(float(amount), cap, days, utcnow())})
+    bits = [f"✅ Promo <b>{code}</b> = ${float(amount):.2f}"]
+    if cap:
+        bits.append(f"{cap} claims max")
+    if days:
+        bits.append(f"expires in {days}d")
+    await message.answer(" | ".join(bits), parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("promos"))
+async def promo_list(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    from ..services import list_promos
+
+    async with session_scope() as session:
+        promos = list_promos(await get_bot_state(session))
+    if not promos:
+        await message.answer("No promo codes yet — create one with /promo.")
+        return
+    lines = ["🎟 Promo Codes:"]
+    for code, data in promos:
+        bits = [f"{data.get('used', 0)}/{data['cap']} used" if data.get("cap") else f"{data.get('used', 0)} used"]
+        if data.get("expires"):
+            bits.append(f"exp {data['expires'][:10]}")
+        lines.append(f"• {code}: ${float(data.get('amount', 0)):.2f} — {' | '.join(bits)}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("delpromo"))
+async def promo_delete(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    from ..services import normalize_promo_code, promo_key
+
+    parts = (message.text or "").split()
+    code = normalize_promo_code(parts[1]) if len(parts) > 1 else None
+    if not code:
+        await message.answer("Usage: /delpromo CODE")
+        return
+    async with session_scope() as session:
+        await set_bot_state_keys(session, {promo_key(code): ""})
+    await message.answer(f"🗑 Promo {code} deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Admin notes on users
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("note"))
+async def admin_note(message: Message) -> None:
+    """/note USER_ID [text] — view (no text), set, or clear ('-')."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    from ..services import get_admin_note, note_key
+
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: /note USER_ID text   (or /note USER_ID to view, /note USER_ID - to clear)")
+        return
+    uid = int(parts[1])
+    async with session_scope() as session:
+        state = await get_bot_state(session)
+        if len(parts) == 2:
+            current = get_admin_note(state, uid)
+            await message.answer(f"📝 Note for {uid}: {current or '(none)'}")
+            return
+        if parts[2].strip() == "-":
+            await set_bot_state_keys(session, {note_key(uid): ""})
+            await message.answer(f"🗑 Note for {uid} cleared.")
+            return
+        await set_bot_state_keys(session, {note_key(uid): parts[2].strip()[:500]})
+    await message.answer(f"✅ Note saved — it will now show on {uid}'s review cards.")

@@ -631,3 +631,128 @@ def referral_qr_png(link: str) -> bytes | None:
         return buf.getvalue()
     except Exception:  # noqa: BLE001
         return None
+
+
+# ---------------------------------------------------------------------------
+# Loyalty levels (#39) — one unified score: volume + referrals + consistency
+# ---------------------------------------------------------------------------
+
+# (min lifetime safe-sell volume in USD, name, emoji)
+LOYALTY_LEVELS: list[tuple[float, str, str]] = [
+    (0, "Rookie", "🌱"),
+    (100, "Bronze", "🥉"),
+    (500, "Silver", "🥈"),
+    (2_000, "Gold", "🥇"),
+    (10_000, "Diamond", "💎"),
+    (50_000, "Legend", "👑"),
+]
+
+
+def loyalty_level(volume: float, completed: int = 0, referrals: int = 0) -> tuple[int, str, str]:
+    """(level index, name, emoji). Referrals add effective lifetime volume."""
+    effective = float(volume or 0) + max(0, referrals) * 50.0
+    if completed <= 0 and effective > 0:
+        completed = max(1, round(effective / 50))
+    if completed >= 5 and effective < LOYALTY_LEVELS[-1][0]:
+        effective += 100.0  # consistent traders get a small leg up
+    level = 0
+    for idx, (threshold, _name, _emoji) in enumerate(LOYALTY_LEVELS):
+        if effective >= threshold:
+            level = idx
+    _, name, emoji = LOYALTY_LEVELS[level]
+    return level, name, emoji
+
+
+def loyalty_line(volume: float, completed: int = 0, referrals: int = 0) -> str:
+    level, name, emoji = loyalty_level(volume, completed, referrals)
+    total_levels = len(LOYALTY_LEVELS) - 1
+    if level < total_levels:
+        next_threshold = LOYALTY_LEVELS[level + 1][0]
+        effective = float(volume or 0) + max(0, referrals) * 50.0
+        remaining = max(0.0, next_threshold - effective)
+        return f"🏆 Trader Level {level} — {emoji} {name} (next level in ${remaining:,.0f} effective volume)"
+    return f"🏆 Trader Level {level} — {emoji} {name} (max level!)"
+
+
+# ---------------------------------------------------------------------------
+# Promo codes (#25) + admin notes (#35) — both live in the bot_state blob
+# ---------------------------------------------------------------------------
+
+
+def promo_key(code: str) -> str:
+    return f"promo:{code.strip().upper()}"
+
+
+def normalize_promo_code(code: str) -> str | None:
+    cleaned = "".join(ch for ch in code.strip().upper() if ch.isalnum())
+    return cleaned if 3 <= len(cleaned) <= 24 else None
+
+
+def new_promo(amount: float, cap: int | None, days: int | None, now: datetime) -> str:
+    return json.dumps(
+        {
+            "amount": float(amount),
+            "cap": cap,
+            "used": 0,
+            "users": [],
+            "expires": (now + timedelta(days=days)).isoformat() if days else None,
+        }
+    )
+
+
+def redeem_promo(state: dict, code: str, user_id: int, now: datetime) -> tuple[float | None, str]:
+    """Attempt a redemption against the state blob.
+
+    Returns (amount_credited, detail) — amount is None when rejected, and the
+    state dict is returned mutated (callers persist it back).
+    """
+    raw = state.get(promo_key(code))
+    if not isinstance(raw, str) or not raw:
+        return None, "that code doesn't exist."
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None, "that code is invalid."
+    expires = data.get("expires")
+    if expires:
+        try:
+            if now >= datetime.fromisoformat(str(expires)):
+                return None, "that code has expired."
+        except ValueError:
+            pass
+    users = data.get("users") or []
+    if user_id in users:
+        return None, "you already redeemed this code."
+    cap = data.get("cap")
+    if cap and int(data.get("used", 0)) >= int(cap):
+        return None, "that code is fully claimed."
+    amount = float(data.get("amount", 0))
+    if amount <= 0:
+        return None, "that code is misconfigured."
+    users.append(user_id)
+    data["users"] = users
+    data["used"] = int(data.get("used", 0)) + 1
+    state[promo_key(code)] = json.dumps(data)
+    return amount, ""
+
+
+def list_promos(state: dict) -> list[tuple[str, dict]]:
+    out: list[tuple[str, dict]] = []
+    for key, raw in state.items():
+        if not isinstance(key, str) or not key.startswith("promo:"):
+            continue
+        if isinstance(raw, str):
+            try:
+                out.append((key.split(":", 1)[1], json.loads(raw)))
+            except ValueError:
+                continue
+    return sorted(out)
+
+
+def note_key(user_id: int) -> str:
+    return f"note:{user_id}"
+
+
+def get_admin_note(state: dict, user_id: int) -> str | None:
+    raw = state.get(note_key(user_id))
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None

@@ -39,6 +39,7 @@ from ..services import (
     clear_flow,
     delete_active_menu_message,
     deposit_address,
+    loyalty_line,
     bot_state_timestamp,
     get_bot_state,
     set_bot_state_keys,
@@ -219,6 +220,30 @@ Referrals so far: {total}{reward_line}""",
                 )
             except (TelegramBadRequest, TelegramForbiddenError):
                 pass
+
+
+
+@router.message(Command("redeem"))
+async def command_redeem(message: Message) -> None:
+    if not message.from_user:
+        return
+    from ..services import get_bot_state, normalize_promo_code, redeem_promo, set_bot_state_keys
+
+    parts = (message.text or "").split()
+    code = normalize_promo_code(parts[1]) if len(parts) > 1 else None
+    if not code:
+        await message.answer("Usage: /redeem CODE")
+        return
+    async with session_scope() as session:
+        user, _ = await get_or_create_user(session, message.from_user)
+        state = await get_bot_state(session)
+        amount, reason = redeem_promo(state, code, user.user_id, utcnow())
+        if amount is None:
+            await message.answer(f"❌ Sorry — {reason}")
+            return
+        user.wallet_balance = as_money(user.wallet_balance + Decimal(str(amount)))
+        await set_bot_state_keys(session, {k: v for k, v in state.items() if k.startswith("promo:")})
+    await message.answer(f"🎉 Code {code} redeemed — ${amount:.2f} added to your wallet!")
 
 
 @router.message(Command("cancel"))
@@ -1356,7 +1381,7 @@ async def show_my_stats(message: Message, user: User) -> None:
         member_since = user.first_seen_at.strftime("%d %b, %Y")
         result = await session.execute(select(func.count(User.user_id)).where(User.referred_by == user.user_id))
         referral_count = result.scalar() or 0
-        extras = [badge_progress_line(user.safe_sell_volume)]
+        extras = [loyalty_line(user.safe_sell_volume, user.safe_sells_completed, referral_count), badge_progress_line(user.safe_sell_volume)]
         if user.post_ad_cooldown_until and user.post_ad_cooldown_until > utcnow():
             extras.append(f"⏳ Next ad available in: {format_remaining(user.post_ad_cooldown_until)}")
         avg, rated = await platform_rating(session)
