@@ -73,7 +73,17 @@ def verification_block(tx: Transaction) -> str:
             + (f"\nReason: {tx.verify_detail}" if tx.verify_detail else "")
             + f"\nHash: {tx.chain_tx_hash or '-'}"
         )
-    return "\nOn-Chain Verify: ⚠️ MANUAL (no verifier for this chain — screenshot only)"
+    block = "\nOn-Chain Verify: ⚠️ MANUAL"
+    if tx.chain_tx_hash:
+        block += f"\nHash: {tx.chain_tx_hash}"
+        from . import chainverify
+
+        url = chainverify.explorer_url(tx.chain or "", tx.chain_tx_hash)
+        if url:
+            block += f"\nExplorer: {url}"
+    else:
+        block += " (no verifier for this chain — screenshot only)"
+    return block
 
 
 def admin_review_text(user: User, tx: Transaction) -> str:
