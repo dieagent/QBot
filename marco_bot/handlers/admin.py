@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -19,10 +20,61 @@ from .. import review
 from ..config import Settings
 from ..db import session_scope
 from ..models import GlobalStats, PaymentMode, RateTier, Transaction, User, utcnow
-from ..services import add_safe_sell_stats, as_money, credit_amount_for, parse_decimal, reset_today_if_needed
+from ..services import (
+    add_safe_sell_stats,
+    as_money,
+    credit_amount_for,
+    get_bot_state,
+    parse_decimal,
+    reset_today_if_needed,
+    set_bot_state_keys,
+)
 from ..translations import lang_of
 
 EXPORT_ROW_CAP = 5000
+
+# After an admin approves a payout-type deal, they get a short-lived prompt
+# asking for the UTR/reference right there (auto /receipt).
+RECEIPT_PROMPT_MINUTES = 10
+RECEIPT_PROMPT_TYPES = {"express_sell", "withdrawal"}
+RECEIPT_SKIP_WORDS = {"skip", "no", "later", "cancel", "/skip", "/cancel"}
+
+
+def pending_receipt_key(admin_id: int) -> str:
+    return f"pending_receipt:{admin_id}"
+
+
+def new_pending_receipt(tx_id: int, now: datetime) -> str:
+    return json.dumps({"tx_id": tx_id, "until": (now + timedelta(minutes=RECEIPT_PROMPT_MINUTES)).isoformat()})
+
+
+def parse_pending_receipt(raw: object, now: datetime) -> int | None:
+    """The pending TX id when a receipt prompt is active; None otherwise."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    try:
+        until = datetime.fromisoformat(str(data.get("until", "")))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if now >= until:
+        return None
+    tx_id = data.get("tx_id")
+    return tx_id if isinstance(tx_id, int) else None
+
+
+def is_skip(text: str) -> bool:
+    return (text or "").strip().lower() in RECEIPT_SKIP_WORDS
+
+
+def normalize_reference(text: str) -> str | None:
+    ref = (text or "").strip()
+    if not ref or len(ref) > 64 or ref.startswith("/"):
+        return None
+    return ref
 
 router = Router()
 _settings: Settings | None = None
@@ -184,30 +236,23 @@ async def recheck_verification(message: Message) -> None:
     await message.answer(f"🔎 Verification re-run started for TX {tx_id}.")
 
 
-@router.message(Command("receipt"))
-async def payout_receipt(message: Message) -> None:
-    if not message.from_user or not is_admin(message.from_user.id):
-        return
-    parts = (message.text or "").split(maxsplit=2)
-    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].strip():
-        await message.answer("Usage: /receipt TX_ID PAYOUT_REFERENCE (e.g. /receipt 42 831204912345)")
-        return
-    tx_id = int(parts[1])
-    reference = parts[2].strip()
+async def _deliver_payout_receipt(bot, tx_id: int, reference: str) -> tuple[bool, str]:
+    """Attach the payout reference and DM the user their receipt + rating card.
+
+    Returns (saved?, deliver-warning/"").
+    """
     async with session_scope() as session:
         tx = await session.get(Transaction, tx_id)
         if not tx:
-            await message.answer(f"TX {tx_id} not found.")
-            return
+            return False, f"TX {tx_id} not found."
         if tx.status != "approved":
-            await message.answer(f"TX {tx_id} is {tx.status} — approve it first, then send the receipt.")
-            return
+            return False, f"TX {tx_id} is {tx.status} — approve it first, then send the receipt."
         tx.payout_reference = reference
         user = await session.get(User, tx.user_id)
         delivered = False
         if user:
             try:
-                await message.bot.send_message(
+                await bot.send_message(
                     user.user_id,
                     msg.payout_receipt_render(tx, lang_of(user)),
                     parse_mode=ParseMode.HTML,
@@ -217,9 +262,26 @@ async def payout_receipt(message: Message) -> None:
             except (TelegramBadRequest, TelegramForbiddenError):
                 delivered = False
     if delivered:
-        await message.answer(f"✅ Receipt for TX {tx_id} delivered (ref: {reference}).")
+        return True, ""
+    return True, f"reference saved on TX {tx_id}, but the user could not be DM'd (bot blocked?)."
+
+
+@router.message(Command("receipt"))
+async def payout_receipt(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].strip():
+        await message.answer("Usage: /receipt TX_ID PAYOUT_REFERENCE (e.g. /receipt 42 831204912345)")
+        return
+    tx_id = int(parts[1])
+    ok, note = await _deliver_payout_receipt(message.bot, tx_id, parts[2].strip())
+    if ok and not note:
+        await message.answer(f"✅ Receipt for TX {tx_id} delivered (ref: {parts[2].strip()}).")
+    elif ok:
+        await message.answer(f"⚠️ {note.capitalize()}.")
     else:
-        await message.answer(f"⚠️ Reference saved on TX {tx_id}, but the user could not be DM'd (bot blocked?).")
+        await message.answer(note)
 
 
 @router.message(Command("export"))
@@ -592,6 +654,11 @@ async def approve_transaction(callback: CallbackQuery, tx_id: int) -> None:
                 )
             except (TelegramBadRequest, TelegramForbiddenError):
                 pass
+
+        ask_receipt = tx.type in RECEIPT_PROMPT_TYPES and not tx.payout_reference
+        if ask_receipt:
+            await set_bot_state_keys(session, {pending_receipt_key(callback.from_user.id): new_pending_receipt(tx.tx_id, utcnow())})
+
         await callback.answer("Approved.")
         if callback.message:
             try:
@@ -599,6 +666,14 @@ async def approve_transaction(callback: CallbackQuery, tx_id: int) -> None:
                 await callback.message.answer(f"✅ TX {tx.tx_id} approved by {callback.from_user.id}.")
             except TelegramBadRequest:
                 pass
+            if ask_receipt:
+                try:
+                    await callback.message.answer(
+                        f"🧾 Reply with the payout reference (UPI UTR etc.) for TX {tx.tx_id} — I'll send the user their receipt + rating card ⭐\n"
+                        f"(window: {RECEIPT_PROMPT_MINUTES} min — reply 'skip' to dismiss, or use /receipt {tx.tx_id} <ref> anytime)"
+                    )
+                except TelegramBadRequest:
+                    pass
 
 
 async def reject_transaction(callback: CallbackQuery, tx_id: int, reason: str | None = None) -> None:
@@ -653,3 +728,39 @@ async def notify_user_rejected(callback: CallbackQuery, user: User, tx: Transact
         await callback.bot.send_message(user.user_id, text, reply_markup=kb.persistent_menu(user))
     except (TelegramBadRequest, TelegramForbiddenError):
         pass
+
+
+# Keep this handler LAST: it replies to free-text only when a receipt prompt
+# is live, and must never swallow the command handlers above.
+@router.message(F.text)
+async def admin_receipt_reply(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+
+    key = pending_receipt_key(message.from_user.id)
+    parsed: int | None = None
+    async with session_scope() as session:
+        state = await get_bot_state(session)
+        parsed = parse_pending_receipt(state.get(key), utcnow())
+        if parsed is None:
+            return
+        if is_skip(text):
+            await set_bot_state_keys(session, {key: ""})
+            await message.answer("👍 Skipped — attach later with /receipt TX_ID <ref> if needed.")
+            return
+        reference = normalize_reference(text)
+        if not reference:
+            await message.answer("That doesn't look like a reference — send the plain UPI UTR / reference text (up to 64 chars), or 'skip'.")
+            return
+        await set_bot_state_keys(session, {key: ""})
+
+    ok, note = await _deliver_payout_receipt(message.bot, parsed, reference)
+    if ok and not note:
+        await message.answer(f"✅ Receipt for TX {parsed} delivered (ref: {reference}) — rating card sent along ⭐")
+    elif ok:
+        await message.answer(f"⚠️ {note.capitalize()}.")
+    else:
+        await message.answer(f"⚠️ {note}")

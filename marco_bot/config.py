@@ -55,6 +55,10 @@ class Settings:
     referral_bonus_usd: Decimal = Decimal("0")
     # Vercel cron endpoints bear this secret in their Authorization header.
     cron_secret: str | None = None
+    # Solana JSON-RPC used for on-chain deposit verification.
+    solana_rpc_url: str = "https://api.mainnet-beta.solana.com"
+    # Optional toncenter.com API key (free tier works without at low volume).
+    toncenter_api_key: str | None = None
 
     @property
     def webhook_mode(self) -> bool:
@@ -196,6 +200,8 @@ def load_settings() -> Settings:
         ui_animations=_bool_env("UI_ANIMATIONS", True),
         referral_bonus_usd=Decimal(_optional_env("REFERRAL_BONUS_USD") or "0"),
         cron_secret=_optional_env("CRON_SECRET"),
+        solana_rpc_url=os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com").strip() or "https://api.mainnet-beta.solana.com",
+        toncenter_api_key=_optional_env("TONCENTER_API_KEY"),
         telegram_api_id=_optional_env("TELEGRAM_API_ID"),
         telegram_api_hash=_optional_env("TELEGRAM_API_HASH"),
         telegram_phone=_optional_env("TELEGRAM_PHONE"),

@@ -154,6 +154,10 @@ If an address is missing, users will see a visible `CONFIGURE_TOKEN_CHAIN_ADDRES
 
 - `/receipt TX_ID PAYOUT_REFERENCE` attaches a payout reference (e.g. the UPI
   UTR) to an approved transaction and DMs the user a payout receipt card.
+- **Auto receipt prompt** — right after you tap **Approve ✅** on a payout
+  deal (SAFE SELL / withdrawal), the bot asks for the reference in chat.
+  Reply within 10 minutes ("skip" to dismiss) and the receipt + rating card
+  goes out immediately, no command typing needed.
 - `/export` uploads a UTF-8 CSV (latest 5000 transactions) with hashes,
   verified amounts and payout references for accounting.
 - **Reject reasons:** the admin review card's **Reject ❌** button now opens
@@ -212,11 +216,14 @@ What gets verified:
 | ETH / BNB native transfers | same as above | recipient, amount reported (not USD-pegged), confirmations |
 | USDT on TRC20 | TronGrid (`only_confirmed`) | token contract, recipient, amount |
 | BTC on Bitcoin | blockstream.info (no key needed) | output pays the address, ≥1 confirmation |
+| SOL on Solana | Solana JSON-RPC (`SOLANA_RPC_URL`, no key needed) | signature confirmed/finalized, net lamport delta to the deposit address |
+| TON | toncenter v2 (`TONCENTER_API_KEY` optional) | tx hash found in the address history, inbound nanoton value |
+| LTC on Litecoin | litecoinspace.org Esplora (no key needed) | output pays the address, ≥1 confirmation |
 
-Networks without a trusted registry entry (e.g. SOL) and chains with no
-configured deposit address fall back to the old screenshot-only review, and
-the admin card says `⚠️ MANUAL` explicitly. A transaction hash can only be
-credited once — resubmitted hashes are refused.
+Solana signatures and TON hashes are accepted directly by the hash prompt —
+no special formatting needed. For any network without a registry entry the
+bot still supports manual review with hash + screenshot. A transaction hash
+can only be credited once — resubmitted hashes are refused.
 
 Useful settings:
 

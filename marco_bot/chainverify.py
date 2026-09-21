@@ -38,6 +38,8 @@ TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523
 ETHERSCAN_BASE = "https://api.etherscan.io/v2/api"
 TRONGRID_BASE = "https://api.trongrid.io"
 BLOCKSTREAM_BASE = "https://blockstream.info/api"
+LTC_ESPLORA_BASE = "https://litecoinspace.org"
+TONCENTER_BASE = "https://toncenter.com"
 
 # Chain label (as used in bot keyboards) -> EVM chain id.
 EVM_CHAIN_IDS: dict[str, int] = {
@@ -194,12 +196,30 @@ def plausible_tx_id(raw: str, chain: str) -> str | None:
     return normalize_tx_hash(value, label)
 
 
+def canonical_tx_id(raw: str, chain: str) -> str | None:
+    """Canonical on-chain id for any supported chain (auto-verified or not).
+
+    Auto-verified SOL/TON keep their loose family shapes (base58/base64);
+    everything else normalizes through the strict hex path.
+    """
+    label = chain.strip().upper()
+    if label in SOL_CHAINS or label in TON_CHAINS:
+        return plausible_tx_id(raw, chain)
+    return normalize_tx_hash(raw, chain)
+
+
 def chain_family(chain: str) -> str | None:
     label = chain.strip().upper()
     if label in TRON_CHAINS:
         return "tron"
     if label in BTC_CHAINS:
         return "btc"
+    if label in SOL_CHAINS:
+        return "sol"
+    if label in TON_CHAINS:
+        return "ton"
+    if label in LTC_CHAINS:
+        return "ltc"
     if label in EVM_CHAIN_IDS:
         return "evm"
     return None
@@ -245,6 +265,18 @@ def support_status(settings: Settings, token: str | None, chain: str | None, add
     if family == "btc":
         if token_label != "BTC":
             return False, "only native BTC can be verified on the Bitcoin chain"
+        return True, ""
+    if family == "sol":
+        if token_label != "SOL":
+            return False, "only native SOL can be verified on Solana"
+        return True, ""
+    if family == "ton":
+        if token_label != "TON":
+            return False, "only native TON can be verified on The Open Network"
+        return True, ""
+    if family == "ltc":
+        if token_label != "LTC":
+            return False, "only native LTC can be verified on the Litecoin chain"
         return True, ""
     return False, f"unsupported network: {chain}"
 
@@ -298,6 +330,12 @@ async def _verify(settings, token, chain, deposit_address, expected_usd, tx_hash
             return await _verify_tron(settings, token, deposit_address, expected_usd, tx_hash, fetch)
         if family == "btc":
             return await _verify_btc(deposit_address, tx_hash, fetch)
+        if family == "sol":
+            return await _verify_sol(settings, deposit_address, tx_hash, fetch)
+        if family == "ton":
+            return await _verify_ton(settings, deposit_address, tx_hash, fetch)
+        if family == "ltc":
+            return await _verify_ltc(deposit_address, tx_hash, fetch)
     except ProvidersUnavailable as exc:
         return VerificationResult(status=STATUS_PENDING, detail=f"verification services unavailable: {exc}")
     except (aiohttp.ClientError, ValueError, KeyError, TypeError, OSError, asyncio.TimeoutError) as exc:
@@ -501,16 +539,24 @@ async def _verify_tron(settings, token, deposit_address, expected_usd, tx_hash, 
     return VerificationResult(status=STATUS_VERIFIED, detail=f"{amount} {token} received on TRC20 (fully confirmed)", amount=amount, explorer_url=url_all)
 
 
-# --------------------------------------------------------------------------- BITCOIN
+# --------------------------------------------------------------------------- Esplora family (BTC chain + Litecoin)
+
 
 async def _verify_btc(deposit_address, tx_hash, fetch) -> VerificationResult:
-    url = f"{BLOCKSTREAM_BASE}/tx/{tx_hash}"
-    payload = await fetch(url, None, None, None)
+    return await _verify_esplora("BTC", "Bitcoin", BLOCKSTREAM_BASE, deposit_address, tx_hash, fetch)
+
+
+async def _verify_ltc(deposit_address, tx_hash, fetch) -> VerificationResult:
+    return await _verify_esplora("LTC", "Litecoin", LTC_ESPLORA_BASE, deposit_address, tx_hash, fetch)
+
+
+async def _verify_esplora(coin: str, network: str, api_base: str, deposit_address, tx_hash, fetch) -> VerificationResult:
+    payload = await fetch(f"{api_base}/tx/{tx_hash}", None, None, None)
     if payload.get("_http_status") == 404 or not payload.get("txid"):
-        return VerificationResult(status=STATUS_PENDING, detail="transaction not found on the Bitcoin network yet")
+        return VerificationResult(status=STATUS_PENDING, detail=f"transaction not found on the {network} network yet")
 
     status = payload.get("status") or {}
-    explorer = explorer_url("BTC", tx_hash)
+    explorer = explorer_url(coin, tx_hash)
     if not status.get("confirmed"):
         return VerificationResult(status=STATUS_PENDING, detail="transaction is broadcast but not mined yet")
 
@@ -525,20 +571,139 @@ async def _verify_btc(deposit_address, tx_hash, fetch) -> VerificationResult:
         return VerificationResult(status=STATUS_FAILED, detail="no output pays the deposit address in this transaction", explorer_url=explorer)
 
     confirmations = 1
-    tip_payload = await fetch(f"{BLOCKSTREAM_BASE}/blocks/tip/height", None, None, None)
-    try:
-        tip_height = int(tip_payload.get("result") or tip_payload.get("height") or 0)
-        block_height = int(status.get("block_height") or 0)
-        if tip_height and block_height:
-            confirmations = max(1, tip_height - block_height + 1)
-    except (TypeError, ValueError):
-        pass
+    tip_payload = await fetch(f"{api_base}/blocks/tip/height", None, None, None)
+    # Some nodes answer with a bare JSON number, others with a small object.
+    tip_height: int | None = None
+    if isinstance(tip_payload, (int, float)):
+        tip_height = int(tip_payload)
+    elif isinstance(tip_payload, dict):
+        try:
+            tip_height = int(tip_payload.get("result") or tip_payload.get("height") or 0) or None
+        except (TypeError, ValueError):
+            tip_height = None
+    block_height = int(status.get("block_height") or 0)
+    if tip_height and block_height:
+        confirmations = max(1, tip_height - block_height + 1)
 
     amount = Decimal(total_sats) / Decimal(10**8)
     return VerificationResult(
         status=STATUS_VERIFIED,
-        detail=f"{amount} BTC received on Bitcoin (amount is not USD-pegged — check value at current rate)",
+        detail=f"{amount} {coin} received on {network} (amount is not USD-pegged — check value at current rate)",
         amount=amount,
         confirmations=confirmations,
         explorer_url=explorer,
+    )
+
+
+# --------------------------------------------------------------------------- SOLANA
+
+
+async def _verify_sol(settings, deposit_address, tx_hash, fetch) -> VerificationResult:
+    """Verify a native SOL transfer via Solana JSON-RPC (free, no key needed)."""
+    rpc_url = settings.solana_rpc_url or "https://api.mainnet-beta.solana.com"
+    solscan = explorer_url("SOL", tx_hash)
+
+    status_payload = await fetch(
+        rpc_url, None, None,
+        {"jsonrpc": "2.0", "id": 1, "method": "getSignatureStatuses", "params": [[tx_hash], {"searchTransactionHistory": True}]},
+    )
+    status_result = status_payload.get("result") if isinstance(status_payload, dict) else None
+    if status_result is None:
+        raise ProvidersUnavailable("solana rpc")
+    values = status_result.get("value") or []
+    entry = values[0] if values else None
+    if entry is None:
+        return VerificationResult(status=STATUS_PENDING, detail="transaction not seen by the Solana network yet")
+    if entry.get("err"):
+        return VerificationResult(status=STATUS_FAILED, detail=f"transaction failed on-chain: {entry['err']}", explorer_url=solscan)
+    confirmation = entry.get("confirmationStatus") or "processed"
+    if confirmation not in {"confirmed", "finalized"}:
+        return VerificationResult(status=STATUS_PENDING, detail=f"confirming on Solana ({confirmation})")
+
+    tx_payload = await fetch(
+        rpc_url, None, None,
+        {"jsonrpc": "2.0", "id": 2, "method": "getTransaction", "params": [tx_hash, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]},
+    )
+    tx_result = tx_payload.get("result") if isinstance(tx_payload, dict) else None
+    if tx_result is None:
+        raise ProvidersUnavailable("solana rpc")
+    meta = tx_result.get("meta") or {}
+    if meta.get("err"):
+        return VerificationResult(status=STATUS_FAILED, detail=f"transaction failed on-chain: {meta['err']}", explorer_url=solscan)
+
+    account_keys = (((tx_result.get("transaction") or {}).get("message")) or {}).get("accountKeys") or []
+    index = None
+    for i, key in enumerate(account_keys):
+        pubkey = key.get("pubkey") if isinstance(key, dict) else key
+        if pubkey == deposit_address:
+            index = i
+            break
+    if index is None:
+        return VerificationResult(status=STATUS_FAILED, detail="the deposit address does not appear in this transaction", explorer_url=solscan)
+
+    pre = meta.get("preBalances") or []
+    post = meta.get("postBalances") or []
+    if index >= len(pre) or index >= len(post):
+        raise ProvidersUnavailable("solana rpc (incomplete balances)")
+    lamports_delta = int(post[index]) - int(pre[index])
+    if lamports_delta <= 0:
+        return VerificationResult(status=STATUS_FAILED, detail="no SOL was credited to the deposit address in this transaction", explorer_url=solscan)
+
+    amount = Decimal(lamports_delta) / Decimal(10**9)
+    return VerificationResult(
+        status=STATUS_VERIFIED,
+        detail=f"{amount} SOL received on Solana ({confirmation}) (amount is not USD-pegged — check value at current rate)",
+        amount=amount,
+        explorer_url=solscan,
+    )
+
+
+# --------------------------------------------------------------------------- TON
+
+
+def _ton_hash_variants(value: str) -> set[str]:
+    """Both encodings of the same TON hash (standard base64 and url-safe)."""
+    if "-" in value or "_" in value:
+        return {value, value.replace("-", "+").replace("_", "/")}
+    return {value, value.replace("+", "-").replace("/", "_")}
+
+
+async def _verify_ton(settings, deposit_address, tx_hash, fetch) -> VerificationResult:
+    """Verify a native TON transfer via the toncenter v2 API (key optional)."""
+    tonviewer = explorer_url("TON", tx_hash)
+    params: dict[str, Any] = {"address": deposit_address, "limit": 100}
+    if settings.toncenter_api_key:
+        params["api_key"] = settings.toncenter_api_key
+    payload = await fetch(f"{TONCENTER_BASE}/api/v2/getTransactions", params, None, None)
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        raise ProvidersUnavailable("toncenter")
+    rows = payload.get("result")
+    if not isinstance(rows, list):
+        raise ProvidersUnavailable("toncenter (unexpected payload)")
+
+    wanted = _ton_hash_variants(tx_hash)
+    match = None
+    for row in rows:
+        txn_id = (row or {}).get("transaction_id") or {}
+        known = txn_id.get("hash")
+        if known and str(known) in wanted:
+            match = row
+            break
+    if match is None:
+        return VerificationResult(status=STATUS_PENDING, detail="transaction not found yet (still propagating through the indexer)")
+
+    in_msg = match.get("in_msg") or {}
+    try:
+        nanotons = int(str(in_msg.get("value", "0")))
+    except (TypeError, ValueError):
+        nanotons = 0
+    if nanotons <= 0:
+        return VerificationResult(status=STATUS_FAILED, detail="this transaction carries no TON transfer to the deposit address", explorer_url=tonviewer)
+
+    amount = Decimal(nanotons) / Decimal(10**9)
+    return VerificationResult(
+        status=STATUS_VERIFIED,
+        detail=f"{amount} TON received on TON (finalized) (amount is not USD-pegged — check value at current rate)",
+        amount=amount,
+        explorer_url=tonviewer,
     )
