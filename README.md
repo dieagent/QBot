@@ -264,6 +264,18 @@ Useful settings:
 - **Saved payout details** — after a first withdrawal the bot remembers the
   payout destination and offers "💳 Use saved details / ✏️ Enter new" next
   time.
+- **Promo codes** — `/promo CODE AMOUNT [CLAIM_CAP] [EXPIRES_DAYS]` creates
+  a wallet-credit code; users redeem with `/redeem CODE` (double-claims,
+  expiry and claim caps enforced). `/promos` lists them, `/delpromo CODE`
+  deletes.
+- **Referral analytics** — the daily admin summary now ends with an invite
+  digest: total invited, new in 24h, and converts (invitees who made ≥1
+  deal) with conversion %.
+- **Admin notes** — `/note USER_ID text` pins a private note to a user that
+  shows automatically on all their review cards; `-` clears it.
+- **Loyalty levels** — every user gets a Trader Level (🌱 Rookie → 👑
+  Legend) computed from lifetime volume and referrals; shown in MY STATS
+  and next to the username on admin review cards.
 
 Useful settings:
 

@@ -93,25 +93,34 @@ def priority_banner(settings: Settings, tx: Transaction) -> str:
     return ""
 
 
-def admin_review_text(user: User, tx: Transaction, settings: Settings | None = None) -> str:
+def admin_review_text(user: User, tx: Transaction, settings: Settings | None = None, note: str | None = None) -> str:
     banner = priority_banner(settings, tx) if settings else ""
     username = f"@{user.username}" if user.username else str(user.user_id)
+    lvl = ""
+    try:
+        from .services import loyalty_level
+
+        _, name, emoji = loyalty_level(getattr(user, "safe_sell_volume", 0) or 0, getattr(user, "safe_sells_completed", 0) or 0)
+        lvl = f" — {emoji} {name}"
+    except Exception:  # noqa: BLE001 — a SimpleNamespace in tests may lack fields
+        lvl = ""
+    note_line = f"\n📝 Admin Note: {note}" if note else ""
     if tx.type == "withdrawal":
         return banner + f"""🧾 Pending Withdrawal
 
 TX: {tx.tx_id}
-User: {username}
+User: {username}{lvl}
 Telegram ID: {user.user_id}
 Amount: ${tx.amount_usd:.2f}
 Destination:
-{tx.withdrawal_destination}"""
+{tx.withdrawal_destination}""" + note_line
     return (
         banner
         + f"""🧾 Pending Verification
 
 TX: {tx.tx_id}
 Type: {tx.type}
-User: {username}
+User: {username}{lvl}
 Telegram ID: {user.user_id}
 Token: {tx.coin}
 Chain: {tx.chain}
@@ -121,11 +130,26 @@ Payment Mode: {tx.payment_mode}
 Deposit Address:
 {tx.deposit_address}"""
         + verification_block(tx)
+        + note_line
     )
 
 
+async def _admin_note_for(user_id: int) -> str | None:
+    """Look up the sticky admin note for a user (bot_state), tolerating any blip."""
+    try:
+        from .db import session_scope
+        from .services import get_admin_note, get_bot_state
+
+        async with session_scope() as session:
+            state = await get_bot_state(session)
+        return get_admin_note(state, user_id)
+    except Exception:  # noqa: BLE001 — notes must never block reviews
+        return None
+
+
 async def notify_admin_review(bot: Bot, settings: Settings, user: User, tx: Transaction) -> None:
-    caption = admin_review_text(user, tx, settings)
+    note = await _admin_note_for(user.user_id)
+    caption = admin_review_text(user, tx, settings, note=note)
     destinations: list[int | str] = []
     if settings.admin_review_chat_id:
         destinations.append(settings.admin_review_chat_id)

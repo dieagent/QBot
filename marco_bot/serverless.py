@@ -227,6 +227,22 @@ async def daily_summary(authorization: str | None) -> dict:
             )
         ).scalar_one()
         total_users = (await session.execute(select(func.count(User.user_id)))).scalar_one()
+        invited_total = (
+            await session.execute(select(func.count(User.user_id)).where(User.referred_by.isnot(None)))
+        ).scalar_one()
+        invited_24h = (
+            await session.execute(
+                select(func.count(User.user_id)).where(
+                    User.referred_by.isnot(None), User.first_seen_at >= cutoff
+                )
+            )
+        ).scalar_one()
+        converted = (
+            await session.execute(
+                select(func.count(func.distinct(Transaction.user_id)))
+                .where(Transaction.user_id.in_(select(User.user_id).where(User.referred_by.isnot(None))))
+            )
+        ).scalar_one()
 
     labels = {
         "express_sell": "SAFE SELL",
@@ -251,10 +267,10 @@ async def daily_summary(authorization: str | None) -> dict:
             "",
             f"⏳ Pending right now: {pending_count}",
             f"👥 Users: {total_users} total, {new_users} new in 24h",
+            referral_digest_line(invited_total, invited_24h, converted),
         ]
     )
     text = "\n".join(lines)
-
     bot = Bot(token=settings.bot_token)
     delivered = 0
     try:
@@ -270,6 +286,11 @@ async def daily_summary(authorization: str | None) -> dict:
     finally:
         await bot.session.close()
     return {"ok": True, "delivered": delivered, "pending": pending_count, "new_users": new_users, "channel_posts": posted}
+
+
+def referral_digest_line(invited_total: int, invited_24h: int, converted: int) -> str:
+    rate = (converted / invited_total * 100) if invited_total else 0.0
+    return f"🎁 Referrals: {invited_total} invited ({invited_24h} in 24h) · {converted} converted ({rate:.0f}%)"
 
 
 TRUST_FEED_INTERVAL_SECONDS = 3 * 60 * 60  # "deals just now" post, max every 3h
