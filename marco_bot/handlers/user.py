@@ -295,7 +295,29 @@ async def handle_tx_submission(message: Message, user: User, text: str) -> None:
         address = data.get("deposit_address")
         supported, _ = chainverify.support_status(settings(), token, chain, address)
         if not supported:
-            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.SCREENSHOT_PROMPT)
+            # Manual-review networks (SOL/TON/LTC…): accept a clean-looking
+            # tx id instead of only a screenshot, so the admin can check it
+            # on the explorer. Bad input re-shows the prompt.
+            manual_id = chainverify.plausible_tx_id(text, chain or "")
+            if not manual_id:
+                await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.MANUAL_HASH_PROMPT)
+                return
+            duplicate = await session.execute(
+                select(Transaction.tx_id).where(
+                    Transaction.chain_tx_hash == manual_id,
+                    Transaction.status.in_(("pending", "approved")),
+                )
+            )
+            if duplicate.scalar_one_or_none() is not None:
+                await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, "⚠️ This transaction hash was already submitted. Please check it or contact support.", reply_markup=kb.persistent_menu(user))
+                return
+            manual_tx = build_deposit_tx(user, data, proof_file_id=data.get("proof_file_id"), verify_status="manual", chain_tx_hash=manual_id)
+            session.add(manual_tx)
+            user.is_locked = True
+            await clear_flow(session, user.user_id)
+            await session.flush()
+            await review.notify_admin_review(message.bot, settings(), user, manual_tx)
+            await send_tracked_menu_message(session, message.bot, user.user_id, message.chat.id, msg.MANUAL_HASH_SUBMITTED, reply_markup=kb.persistent_menu(user))
             return
         tx_hash = chainverify.normalize_tx_hash(text, chain or "")
         if not tx_hash:
@@ -959,7 +981,7 @@ async def request_screenshot(callback: CallbackQuery, user: User) -> None:
         data = session_data(bot_session)
         supported, _ = chainverify.support_status(settings(), data.get("token"), data.get("chain"), data.get("deposit_address"))
         lang = lang_of(user)
-        prompt = (msg.tx_hash_prompt(lang) if supported else msg.SCREENSHOT_PROMPT)
+        prompt = (msg.tx_hash_prompt(lang) if supported else msg.MANUAL_HASH_PROMPT)
         verify_step = 4 if wallet_flow else 5
         prompt = msg.steps_header(verify_step, wallet_flow=wallet_flow, lang=lang) + "\n\n" + prompt
         await animation.animate_action(callback, "Connecting to blockchain", enabled=settings().ui_animations, style="spinner")

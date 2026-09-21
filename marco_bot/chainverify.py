@@ -54,6 +54,9 @@ EVM_CHAIN_IDS: dict[str, int] = {
 
 TRON_CHAINS = {"TRC20", "TRON"}
 BTC_CHAINS = {"BTC", "BITCOIN"}
+SOL_CHAINS = {"SOL", "SOLANA"}
+TON_CHAINS = {"TON", "TONCO"}
+LTC_CHAINS = {"LTC", "LITECOIN"}
 
 DEFAULT_CONFIRMATIONS: dict[int, int] = {
     1: 12,
@@ -120,6 +123,10 @@ TRON_TOKENS: dict[str, tuple[str, int, bool]] = {
 }
 
 HEX64 = re.compile(r"^(0x)?[0-9a-fA-F]{64}$")
+# Hashes for manually-reviewed networks: Solana uses base58 signatures
+# (~88 chars, no 0/O/I/l), TON uses base64(-url) tx hashes.
+SOL_SIGNATURE_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{82,90}$")
+TON_HASH_RE = re.compile(r"^[A-Za-z0-9_\-+/]{43,50}={0,2}$")
 
 # (url, query params, headers, json body) -> decoded JSON payload
 Fetch = Callable[
@@ -168,6 +175,25 @@ def normalize_tx_hash(raw: str, chain: str) -> str | None:
     return value.removeprefix("0x").removeprefix("0X").lower()
 
 
+def plausible_tx_id(raw: str, chain: str) -> str | None:
+    """Loose transaction-id validation for manually-reviewed networks.
+
+    Solana signatures (base58) and TON hashes (base64) don't fit the hex64
+    mold, so each family gets its own shape check. Everything else (LTC,
+    BTC, EVM, TRON) falls through to the strict hex normalizer.
+    Returns the cleaned id, or None when the input clearly is not one.
+    """
+    value = raw.strip()
+    if not value or len(value) > 128 or " " in value:
+        return None
+    label = chain.strip().upper()
+    if label in SOL_CHAINS:
+        return value if SOL_SIGNATURE_RE.match(value) else None
+    if label in TON_CHAINS:
+        return value if TON_HASH_RE.match(value) else None
+    return normalize_tx_hash(value, label)
+
+
 def chain_family(chain: str) -> str | None:
     label = chain.strip().upper()
     if label in TRON_CHAINS:
@@ -181,6 +207,12 @@ def chain_family(chain: str) -> str | None:
 
 def explorer_url(chain: str, tx_hash: str) -> str | None:
     label = chain.strip().upper()
+    if label in SOL_CHAINS:
+        return f"https://solscan.io/tx/{tx_hash}"
+    if label in TON_CHAINS:
+        return f"https://tonviewer.com/transaction/{tx_hash}"
+    if label in LTC_CHAINS:
+        return f"https://blockchair.com/litecoin/transaction/{tx_hash}"
     if label in TRON_CHAINS:
         return f"https://tronscan.org/#/transaction/{tx_hash}"
     if label in BTC_CHAINS:

@@ -340,6 +340,13 @@ def cancelled_user_text(tx_id: int, lang: str | None = None) -> str:
 
 
 SCREENSHOT_PROMPT = "Please send a screenshot of your payment for verification 📸."
+MANUAL_HASH_PROMPT = """👁 Manual review on this network
+
+Paste your transaction hash / ID here — our team verifies it on the blockchain explorer and then approves.
+(You can also send a payment screenshot instead 📸)"""
+MANUAL_HASH_SUBMITTED = """✅ Hash received!
+
+Our team is verifying it on the explorer now. You'll be notified the moment it's approved ⚡"""
 
 TX_HASH_PROMPT = """🔎 Verify Your Payment On-Chain
 

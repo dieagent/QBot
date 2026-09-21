@@ -112,6 +112,12 @@ def express_chains(token: str, prefix: str = "express") -> InlineKeyboardMarkup:
         options = c.BTC_CHAINS
     elif token == "ETH":
         options = ["BEP20", "ERC20", "MATIC", "TRC20"]
+    elif token == "SOL":
+        options = ["SOL"]
+    elif token == "TON":
+        options = ["TON"]
+    elif token == "LTC":
+        options = ["LTC"]
     rows: list[list[InlineKeyboardButton]] = []
     for idx in range(0, len(options), 2):
         rows.append(
@@ -196,7 +202,8 @@ def token_select(prefix: str = "express") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="BTC", callback_data=f"{prefix}:token:BTC"), InlineKeyboardButton(text="ETH", callback_data=f"{prefix}:token:ETH")],
-            [InlineKeyboardButton(text="USDT", callback_data=f"{prefix}:token:USDT")],
+            [InlineKeyboardButton(text="USDT", callback_data=f"{prefix}:token:USDT"), InlineKeyboardButton(text="SOL", callback_data=f"{prefix}:token:SOL")],
+            [InlineKeyboardButton(text="TON", callback_data=f"{prefix}:token:TON"), InlineKeyboardButton(text="LTC", callback_data=f"{prefix}:token:LTC")],
             [InlineKeyboardButton(text=c.BACK_PLAIN_BUTTON, callback_data="nav:back")],
         ]
     )

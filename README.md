@@ -124,8 +124,14 @@ request, so broken changes are flagged before they can deploy.
 Example:
 
 ```env
-DEPOSIT_ADDRESSES_JSON={"USDT":{"BEP20":"0x...","TRC20":"T..."},"BTC":{"BTC":"bc1..."},"ETH":{"ERC20":"0x..."}}
+DEPOSIT_ADDRESSES_JSON={"USDT":{"BEP20":"0x...","TRC20":"T..."},"BTC":{"BTC":"bc1..."},"ETH":{"ERC20":"0x..."},"SOL":{"SOL":"..."},"TON":{"TON":"UQ..."},"LTC":{"LTC":"ltc1..."}}
 ```
+
+Networks without an automatic verifier (SOL, TON, LTC, and wrapped variants)
+run on **manual review**: the user pastes the transaction hash (or a
+screenshot), the admin card shows the hash plus a clickable explorer link —
+solscan.io / tonviewer.com / blockchair — and the admin approves once the
+explorer confirms it.
 
 If an address is missing, users will see a visible `CONFIGURE_TOKEN_CHAIN_ADDRESS` placeholder so misconfiguration is obvious.
 
