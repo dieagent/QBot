@@ -513,24 +513,63 @@ async def reset_ad_cooldown(message: Message) -> None:
 async def maintenance_mode(message: Message) -> None:
     if not message.from_user or not is_admin(message.from_user.id):
         return
-    parts = (message.text or "").split()
-    if len(parts) != 2 or parts[1].lower() not in {"on", "off"}:
-        await message.answer("Usage: /maintenance on|off")
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2 or parts[1].lower() not in {"on", "off", "status"}:
+        await message.answer(
+            "Usage:\n/maintenance on [minutes] [optional note]\n/maintenance off\n/maintenance status\n(example: /maintenance on 30 bank server slow)"
+        )
         return
-    
-    is_maintenance = parts[1].lower() == "on"
-    flag = "🔴 MAINTENANCE MODE ON" if is_maintenance else "🟢 MAINTENANCE MODE OFF"
-    
-    # Store maintenance mode in GlobalStats or broadcast a message
+    verb = parts[1].lower()
     async with session_scope() as session:
-        stats = await session.get(GlobalStats, 1)
-        if not stats:
-            stats = GlobalStats(id=1)
-            session.add(stats)
-        # You can add a maintenance_mode field to GlobalStats if needed
-        # For now, we'll just send a notification
-    
-    await message.answer(f"{flag}\n\n⚠️ Note: Maintenance mode feature requires bot logic updates to enforce it globally.")
+        state = await get_bot_state(session)
+        if verb == "status":
+            note = maintenance_block(state, utcnow())
+            await message.answer(f"🔴 Maintenance ON: {note}" if note else "🟢 Maintenance OFF")
+            return
+        if verb == "off":
+            await set_bot_state_keys(session, {"maintenance": None})
+            await message.answer("🟢 MAINTENANCE MODE OFF — users can start deals again.")
+            return
+
+        until = None
+        note = None
+        tail = parts[2] if len(parts) > 2 else ""
+        tail_parts = tail.split(maxsplit=1)
+        if tail_parts and tail_parts[0].isdigit():
+            until = (utcnow() + timedelta(minutes=int(tail_parts[0]))).isoformat()
+            note = tail_parts[1] if len(tail_parts) > 1 else None
+        elif tail:
+            note = tail
+        await set_bot_state_keys(session, {"maintenance": json.dumps({"on": True, "until": until, "note": note})})
+        detail = f" until {datetime.fromisoformat(until):%H:%M UTC}" if until else " until you turn it off"
+        await message.answer(f"🔴 MAINTENANCE MODE ON{detail} — new deals are paused and users get a polite hold message.")
+
+
+def maintenance_block(state: dict, now: datetime) -> str | None:
+    """The user-facing hold message while maintenance is active, else None."""
+    raw = state.get("maintenance")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not data.get("on"):
+        return None
+    until_raw = data.get("until")
+    if until_raw:
+        try:
+            until = datetime.fromisoformat(str(until_raw))
+        except ValueError:
+            until = None
+        if until is not None and now >= until:
+            return None  # auto-expired
+    else:
+        until = None
+    note = str(data.get("note") or "").strip()
+    when = f"\n⏱ Back around {until:%H:%M UTC}." if until else ""
+    extra = f"\n📌 {note}" if note else ""
+    return f"🔧 Quick maintenance break — we're not starting new deals right now." + when + extra + "\nPlease try again shortly 🙏"
 
 
 @router.callback_query(F.data.startswith("admin:"))
@@ -588,6 +627,24 @@ async def approve_transaction(callback: CallbackQuery, tx_id: int) -> None:
         if not user:
             await callback.answer("User not found.", show_alert=True)
             return
+
+        # Optional quorum: big deals must be tapped by TWO different admins.
+        threshold = settings().dual_approval_usd
+        if threshold and tx.amount_usd is not None and tx.amount_usd >= threshold:
+            key = f"dual_approve:{tx.tx_id}"
+            first = (await get_bot_state(session)).get(key)
+            me = callback.from_user.id
+            if first is None:
+                await set_bot_state_keys(session, {key: me})
+                await callback.answer(
+                    f"Approved (1 of 2) — a second admin must also tap Approve for deals ≥ ${threshold:.0f}.",
+                    show_alert=True,
+                )
+                return
+            if first == me:
+                await callback.answer("You already logged approval 1 of 2 — a *different* admin must confirm.", show_alert=True)
+                return
+            await set_bot_state_keys(session, {key: None})
 
         if tx.type == "withdrawal":
             if user.wallet_balance < tx.amount_usd:

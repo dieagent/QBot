@@ -227,6 +227,31 @@ can only be credited once — resubmitted hashes are refused.
 
 Useful settings:
 
+## Ops & Growth Features
+
+- **USDC support** — USDC deposits on ERC20 / BEP20 / MATIC / BASE work with
+  the same machine-grade verification as USDT (its registry ships built in).
+  Set `USDC` addresses in `DEPOSIT_ADDRESSES_JSON`; the ETH wallet address
+  can be reused on every EVM chain.
+- **Live price hints** — the deposit screen for BTC/ETH/BNB/SOL/TON/LTC
+  shows "≈ 0.0048 BTC (≈ $500)" at the current price (CoinGecko, cached 2
+  min), and every volatile verification is stamped with a live USD estimate
+  so admins can sanity-check volatile amounts in one glance.
+- **Priority lane** — deals ≥ `PRIORITY_USD` (default $1000) show a 🔥
+  PRIORITY banner on the admin review card.
+- **Dual approval** — set `DUAL_APPROVAL_USD` (e.g. 5000) and deals at or
+  above that amount must be approved by two *different* admins before payout.
+- **Maintenance mode** — `/maintenance on 30 bank slow` pauses new deals for
+  30 minutes with a polite user-facing hold message (auto-resumes);
+  `/maintenance off` clears it, `/maintenance status` checks it.
+- **Channel marketing drip** — the cron pass also posts to your ads channel:
+  a "✅ N deals · $X safe-sold" trust feed every ~3h and a daily rates
+  broadcast built from your `RateTier` table.
+
+Useful settings:
+
+- `PRIORITY_USD` — USD threshold for the priority banner (default 1000).
+- `DUAL_APPROVAL_USD` — optional USD threshold requiring two-admin approval.
 - `ETHERSCAN_API_KEY` — one Etherscan V2 key covers every EVM chain; free
   plans may not include BSC, in which case the bot automatically falls back
   to Infura / public RPC endpoints.

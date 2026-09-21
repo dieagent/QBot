@@ -19,17 +19,20 @@ import html
 import logging
 import time
 from datetime import datetime, timedelta
+from typing import Any
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import Update
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from . import bootcheck, review
 from .config import Settings, load_settings
 from .db import configure_database, init_db, session_scope
 from .handlers import admin, user
-from .models import Transaction, User
+from .models import RateTier, Transaction, User
+from .services import get_bot_state, set_bot_state_keys, throttled
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -261,9 +264,108 @@ async def daily_summary(authorization: str | None) -> dict:
                 delivered += 1
             except (TelegramBadRequest, TelegramForbiddenError):
                 continue
+
+        # --- Channel marketing drip (guarded by watermarks in bot_state) ---
+        posted = await _channel_marketing_pass(settings, bot)
     finally:
         await bot.session.close()
-    return {"ok": True, "delivered": delivered, "pending": pending_count, "new_users": new_users}
+    return {"ok": True, "delivered": delivered, "pending": pending_count, "new_users": new_users, "channel_posts": posted}
+
+
+TRUST_FEED_INTERVAL_SECONDS = 3 * 60 * 60  # "deals just now" post, max every 3h
+RATES_POST_INTERVAL_SECONDS = 23 * 60 * 60  # rates broadcast, roughly daily
+
+
+def trust_feed_text(count: int, volume: float, avg_rating: float | None) -> str | None:
+    if count <= 0:
+        return None
+    lines = [
+        "✅ TRUSTED ESCROW — activity in the last 3 hours",
+        "",
+        f"🤝 {count} deal{'s' if count != 1 else ''} completed",
+        f"💵 ${volume:,.2f} safe-sold",
+    ]
+    if avg_rating is not None:
+        lines.append(f"⭐ {avg_rating:.1f}/5 average rating")
+    lines.append("")
+    lines.append("Sell crypto for INR in ~60 seconds — tap SAFE SELL in the bot. 🚀")
+    return "\n".join(lines)
+
+
+def rates_broadcast_text(tiers: list[tuple[str, Any, Any, Any]]) -> str | None:
+    """A compact channel post listing the best rate per payment mode."""
+    if not tiers:
+        return None
+    icons = {"UPI": "💳", "IMPS": "🏦", "CDM": "🏧", "GBP": "💷"}
+    per_mode: dict[str, list[float]] = {}
+    for row in tiers:
+        mode = str(row[0]).upper()
+        try:
+            per_mode.setdefault(mode, []).append(float(row[3]))
+        except (TypeError, ValueError):
+            continue
+    if not per_mode:
+        return None
+    lines = ["📈 Today's MARCO Rates — sell crypto for INR", ""]
+    for mode in sorted(per_mode):
+        rates = per_mode[mode]
+        spread = f"{min(rates):.2f}" if min(rates) == max(rates) else f"{min(rates):.2f}–{max(rates):.2f}"
+        lines.append(f"{icons.get(mode, '💸')} {mode}: {spread} ₹/$")
+    lines.append("")
+    lines.append("Open the bot → SAFE SELL. Verified payouts, receipts & ratings. ✅")
+    return "\n".join(lines)
+
+
+async def _channel_marketing_pass(settings, bot: Bot) -> int:
+    """Trust feed (3h) + daily rates broadcast to the ads channel.
+
+    Watermarks live in bot_state, so this pass can run on any cron cadence
+    and will only post when due. Any channel hiccup is swallowed — ops must
+    never fail because marketing did.
+    """
+    if not settings.ads_channel_id:
+        return 0
+    posted = 0
+    now = datetime.utcnow()
+    try:
+        async with session_scope() as session:
+            state = await get_bot_state(session)
+
+            if not throttled(state, "feed_last_at", TRUST_FEED_INTERVAL_SECONDS, now=now):
+                since = now - timedelta(seconds=TRUST_FEED_INTERVAL_SECONDS)
+                count, volume, avg_rating = (
+                    await session.execute(
+                        select(
+                            func.count(Transaction.tx_id),
+                            func.coalesce(func.sum(Transaction.amount_usd), 0),
+                            func.avg(Transaction.rating),
+                        ).where(
+                            Transaction.status == "approved",
+                            Transaction.type.in_(["express_sell", "withdrawal"]),
+                            Transaction.resolved_at >= since,
+                        )
+                    )
+                ).one()
+                text = trust_feed_text(int(count), float(volume or 0), float(avg_rating) if avg_rating is not None else None)
+                if text:
+                    await bot.send_message(settings.ads_channel_id, text)
+                    posted += 1
+                state = await set_bot_state_keys(session, {"feed_last_at": now.isoformat()})
+
+            if not throttled(state, "rates_posted_at", RATES_POST_INTERVAL_SECONDS, now=now):
+                tiers = (
+                    await session.execute(
+                        select(RateTier.payment_mode, RateTier.min_usd, RateTier.max_usd, RateTier.rate_inr)
+                    )
+                ).all()
+                text = rates_broadcast_text(tiers)
+                if text:
+                    await bot.send_message(settings.ads_channel_id, text)
+                    posted += 1
+                await set_bot_state_keys(session, {"rates_posted_at": now.isoformat()})
+    except (TelegramBadRequest, TelegramForbiddenError, SQLAlchemyError, OSError) as exc:
+        logger.warning("channel marketing pass skipped: %r", exc)
+    return posted
 
 
 async def alert_exception(exc: BaseException) -> None:

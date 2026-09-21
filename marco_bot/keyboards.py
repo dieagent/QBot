@@ -112,6 +112,8 @@ def express_chains(token: str, prefix: str = "express") -> InlineKeyboardMarkup:
         options = c.BTC_CHAINS
     elif token == "ETH":
         options = ["BEP20", "ERC20", "MATIC", "TRC20"]
+    elif token == "USDC":
+        options = c.USDC_EVM_CHAINS
     elif token == "SOL":
         options = ["SOL"]
     elif token == "TON":
@@ -201,9 +203,10 @@ def payment_modes(modes: list[PaymentMode]) -> InlineKeyboardMarkup:
 def token_select(prefix: str = "express") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="USDT", callback_data=f"{prefix}:token:USDT"), InlineKeyboardButton(text="USDC", callback_data=f"{prefix}:token:USDC")],
             [InlineKeyboardButton(text="BTC", callback_data=f"{prefix}:token:BTC"), InlineKeyboardButton(text="ETH", callback_data=f"{prefix}:token:ETH")],
-            [InlineKeyboardButton(text="USDT", callback_data=f"{prefix}:token:USDT"), InlineKeyboardButton(text="SOL", callback_data=f"{prefix}:token:SOL")],
-            [InlineKeyboardButton(text="TON", callback_data=f"{prefix}:token:TON"), InlineKeyboardButton(text="LTC", callback_data=f"{prefix}:token:LTC")],
+            [InlineKeyboardButton(text="SOL", callback_data=f"{prefix}:token:SOL"), InlineKeyboardButton(text="TON", callback_data=f"{prefix}:token:TON")],
+            [InlineKeyboardButton(text="LTC", callback_data=f"{prefix}:token:LTC")],
             [InlineKeyboardButton(text=c.BACK_PLAIN_BUTTON, callback_data="nav:back")],
         ]
     )
