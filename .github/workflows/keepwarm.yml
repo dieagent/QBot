@@ -1,0 +1,22 @@
+name: Keep bot warm
+
+# Pings the webhook health route every ~10 minutes so the serverless
+# function never fully cools down (free Vercel Hobby tier = daily cron
+# only). GitHub schedules can drift a few minutes — that's fine, we only
+# need warmth, not precision.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}  # "Run workflow" button for a manual poke
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping webhook health
+        run: |
+          code=$(curl -s -o /tmp/ping.json -w "%{http_code}" --max-time 45 https://qbot-bay.vercel.app/api/webhook)
+          cat /tmp/ping.json
+          echo "http=$code"
+          [ "$code" = "200" ] || exit 1
